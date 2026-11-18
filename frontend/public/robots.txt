@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+# Private / authenticated areas
+Disallow: /editor
+Disallow: /login
+Disallow: /editor/login
+
+# Data-driven sitemap served by the backend
+Sitemap: /sitemap.xml

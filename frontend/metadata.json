@@ -1,0 +1,6 @@
+{
+  "name": "Vante — Craft in Motion",
+  "description": "A studio portfolio where a ribbon of live video work sweeps through space, then lands in a grid.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
