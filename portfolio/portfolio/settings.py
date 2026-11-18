@@ -73,7 +73,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config("SECRET_KEY")
 
-DEBUG = config("DEBUG", default=True, cast=bool)
+# Defaults to False so a deployment that forgets to set DEBUG still runs in
+# production mode. DEBUG=True disables the HTTPS redirect and marks the CSRF
+# and refresh cookies `SameSite=Lax` (not `Secure`), which breaks the cross-site
+# session between the Vercel SPA and this API. Set DEBUG=True in your local
+# .env for development.
+DEBUG = config("DEBUG", default=False, cast=bool)
 
 # Behind a reverse proxy (Railway, Render, Heroku) TLS is terminated upstream
 # and the request reaches gunicorn over plain HTTP. Without trusting the

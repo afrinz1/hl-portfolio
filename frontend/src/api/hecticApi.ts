@@ -251,6 +251,9 @@ export const hecticApi = {
     const user = await apiRequest<AuthUser>(url, {
       method: 'POST',
       body: JSON.stringify(payload),
+      // A 401 here is bad credentials, not an expired session — don't let the
+      // silent-refresh flow swallow the real error message.
+      skipAuthRefresh: true,
     });
 
     // Keep the returned access token + CSRF token so subsequent editor

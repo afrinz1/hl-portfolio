@@ -208,9 +208,19 @@ export async function attemptTokenRefresh(): Promise<string | null> {
 // Custom event dispatched when a 401 cannot be recovered
 export const AUTH_EXPIRED_EVENT = 'hectic:auth:expired';
 
+export interface ApiRequestOptions extends RequestInit {
+  /**
+   * Surface a 401 response as-is instead of running the silent refresh +
+   * retry flow. The login endpoint sets this: there a 401 means "invalid
+   * credentials", not "expired session", and a refresh attempt would replace
+   * the real error with a misleading "Session expired" message.
+   */
+  skipAuthRefresh?: boolean;
+}
+
 export async function apiRequest<T>(
   url: string,
-  options?: RequestInit
+  options?: ApiRequestOptions
 ): Promise<T> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -255,7 +265,9 @@ export async function apiRequest<T>(
   }
 
   // --- 401 handling: attempt a silent refresh and retry once ---
-  if (response.status === 401) {
+  // Skipped for endpoints where a 401 is a meaningful result (the login
+  // endpoint) rather than a signal that the access token needs renewing.
+  if (response.status === 401 && !options?.skipAuthRefresh) {
     const newToken = await attemptTokenRefresh();
     if (newToken) {
       // Update bearer header and retry
