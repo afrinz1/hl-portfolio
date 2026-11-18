@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Eye, EyeOff, Lock, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
 import { HecticLogoMark } from '../components/Navbar';
 import { useAuth } from '../context/AuthContext';
 
@@ -41,12 +41,6 @@ export function LoginPage() {
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleUseDemoCredentials = () => {
-    setUsername('editor');
-    setPassword('editor123');
-    setError(null);
   };
 
   return (
@@ -133,7 +127,7 @@ export function LoginPage() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="e.g. editor"
+                placeholder="your username"
                 className="w-full rounded-xl bg-[#faf9f5] border border-[#111110]/15 px-4 py-2.5 text-sm text-[#111110] placeholder-[#111110]/35 focus:bg-white focus:border-[#14bfb9] focus:outline-none focus:ring-2 focus:ring-[#14bfb9]/20 transition-all"
               />
             </div>
@@ -189,21 +183,6 @@ export function LoginPage() {
               )}
             </button>
           </form>
-
-          {/* Quick Demo Credentials Assistant */}
-          <div className="mt-6 pt-5 border-t border-[#111110]/10 text-center">
-            <p className="text-[11px] font-mono-hl text-[#111110]/65 mb-2">
-              Default Editor Access
-            </p>
-            <button
-              type="button"
-              onClick={handleUseDemoCredentials}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#f4f3ee] hover:bg-[#eae8df] border border-[#111110]/10 text-[11px] font-mono-hl text-[#111110] transition-colors cursor-pointer"
-            >
-              <Sparkles className="h-3 w-3 text-[#0c7c76]" />
-              <span>Fill: editor / editor123</span>
-            </button>
-          </div>
         </div>
       </main>
 

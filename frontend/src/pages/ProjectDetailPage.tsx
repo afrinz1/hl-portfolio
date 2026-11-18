@@ -184,8 +184,10 @@ export function ProjectDetailPage() {
             </div>
 
             {/* Large Video Presentation */}
-            <div className={`relative w-full overflow-hidden bg-[#18181b] flex items-center justify-center transition-all duration-500 ${
-              isVideoPortrait ? 'aspect-[9/16] max-w-[500px] mx-auto rounded-[6px] shadow-2xl' : 'aspect-video'
+            <div className={`relative overflow-hidden bg-[#18181b] flex items-center justify-center transition-all duration-500 ${
+              isVideoPortrait
+                ? 'aspect-[9/16] w-full max-w-[min(500px,calc(80svh_*_9_/_16))] mx-auto rounded-[6px] shadow-2xl'
+                : 'aspect-video w-full'
             }`}>
               {primaryVideo ? (
                 <video

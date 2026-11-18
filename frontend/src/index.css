@@ -114,9 +114,16 @@ select {
     cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* `backwards` (not `both`) on purpose: this animation runs on the navbar
+ * <header>, which wraps the frosted surface. A forward-filling transform would
+ * stay on the header after the intro, turning it into a backdrop root and
+ * silently killing the navbar's `backdrop-filter` — the glass would then only
+ * frost the (empty) header instead of the hero behind it. Reverting to the
+ * element's own styles after the animation keeps the header transform-free, so
+ * the home page gets the same frosted glass as every other page. */
 .hero-navbar.hero-intro {
   animation: hero-content-reveal 0.9s
-    cubic-bezier(0.22, 1, 0.36, 1) 0.25s both;
+    cubic-bezier(0.22, 1, 0.36, 1) 0.25s backwards;
 }
 
 .hero-intro .hero-title {

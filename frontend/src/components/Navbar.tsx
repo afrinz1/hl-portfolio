@@ -70,25 +70,27 @@ export function Navbar({
   // Apple-style "liquid glass" surface: a frosted, translucent fill with a
   // soft diffuse shadow and generously rounded corners so all four edges stay
   // soft. No border — the edge is defined purely by the tint and shadow.
+  // The fill is dense enough that the black nav text stays readable even when
+  // a dark hero (e.g. a project video) slides underneath the bar.
   const glassTint = overlay
     ? isLight
-      ? 'bg-white/12'
-      : 'bg-[#060607]/20'
+      ? 'bg-white/22'
+      : 'bg-[#060607]/30'
     : isLight
-      ? 'bg-[#FBF9F4]/35'
-      : 'bg-[#0a0a0b]/35';
+      ? 'bg-[#FBF9F4]/50'
+      : 'bg-[#0a0a0b]/45';
 
   const glassShadow = isLight
     ? 'shadow-[0_10px_34px_-12px_rgba(17,17,16,0.18)]'
     : 'shadow-[0_10px_34px_-12px_rgba(0,0,0,0.6)]';
 
-  const glassSurface = `backdrop-blur-2xl backdrop-saturate-[1.7] ${glassTint} ${glassShadow}`;
+  const glassSurface = `backdrop-blur-2xl backdrop-saturate-[1.8] ${glassTint} ${glassShadow}`;
 
   // Chromium-only backdrop refraction: it bends whatever is behind the bar.
   // Safari/Firefox reject an SVG `url()` inside backdrop-filter and fall back
   // to the plain frost from the classes above.
   const refractionStyle = {
-    backdropFilter: 'blur(28px) saturate(1.7) url(#navbar-liquid-glass)',
+    backdropFilter: 'blur(32px) saturate(1.8) url(#navbar-liquid-glass)',
   };
 
   const displacementRef = useRef<SVGFEDisplacementMapElement | null>(null);

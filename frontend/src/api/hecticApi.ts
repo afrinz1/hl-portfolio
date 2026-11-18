@@ -1,14 +1,4 @@
 import { apiRequest, attemptTokenRefresh, buildApiUrl, clearAccessToken, resolveMediaUrl, setAccessToken, setCsrfToken } from './client';
-import {
-  DEMO_CATEGORIES,
-  DEMO_INSIGHTS,
-  DEMO_PROJECTS,
-  DEMO_SERVICES,
-  DEMO_STUDIO,
-  DEMO_WORK_CATEGORIES,
-  filterDemoWorkProjects,
-  paginateDemo,
-} from './demoData';
 import type {
   AuthUser,
   Category,
@@ -27,7 +17,7 @@ import type {
   StudioInfo,
 } from './types';
 
-function assertPaginated<T>(data: PaginatedResponse<T>): PaginatedResponse<T> {
+async function assertPaginated<T>(data: PaginatedResponse<T>): Promise<PaginatedResponse<T>> {
   if (!data || typeof data !== 'object' || !Array.isArray(data.results)) {
     throw new Error('Expected paginated DRF response containing results.');
   }
@@ -39,156 +29,75 @@ function assertPaginated<T>(data: PaginatedResponse<T>): PaginatedResponse<T> {
   };
 }
 
-async function withDemoFallback<T>(
-  fetcher: () => Promise<T>,
-  fallback: () => T
-): Promise<T> {
-  try {
-    return await fetcher();
-  } catch {
-    return fallback();
-  }
-}
-
+/**
+ * Public endpoints read straight from the Django API.
+ *
+ * There is deliberately no demo fallback: inventing projects, videos and
+ * studio copy on failure is worse than showing an honest error. Consumers
+ * render loading skeletons while these requests are in flight and the shared
+ * `ErrorState` when they fail.
+ */
 export const hecticApi = {
   async getCategories(params?: { page?: number }): Promise<PaginatedResponse<Category>> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl('/categories/', params);
-        const data = await apiRequest<PaginatedResponse<Category>>(url);
-        return assertPaginated(data);
-      },
-      () => paginateDemo(DEMO_CATEGORIES, params?.page ?? 1)
-    );
+    const url = buildApiUrl('/categories/', params);
+    const data = await apiRequest<PaginatedResponse<Category>>(url);
+    return assertPaginated(data);
   },
 
   async getProjects(params?: {
     page?: number;
     category?: string | number;
   }): Promise<PaginatedResponse<Project>> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl('/projects/', params);
-        const data = await apiRequest<PaginatedResponse<Project>>(url);
-        return assertPaginated(data);
-      },
-      () => {
-        const filtered = params?.category
-          ? DEMO_PROJECTS.filter((p) => {
-              const slug = getProjectCategorySlug(p);
-              return slug === String(params.category);
-            })
-          : DEMO_PROJECTS;
-        return paginateDemo(filtered, params?.page ?? 1);
-      }
-    );
+    const url = buildApiUrl('/projects/', params);
+    const data = await apiRequest<PaginatedResponse<Project>>(url);
+    return assertPaginated(data);
   },
 
   async getProjectBySlug(slug: string): Promise<Project> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl(`/projects/${encodeURIComponent(slug)}/`);
-        return apiRequest<Project>(url);
-      },
-      () => {
-        const match = DEMO_PROJECTS.find((p) => p.slug === slug);
-        if (!match) {
-          throw new Error('Project not found.');
-        }
-        return match;
-      }
-    );
+    const url = buildApiUrl(`/projects/${encodeURIComponent(slug)}/`);
+    return apiRequest<Project>(url);
   },
 
   async getProjectMedia(
     slug: string,
     params?: { page?: number }
   ): Promise<PaginatedResponse<ProjectMedia>> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl(`/projects/${encodeURIComponent(slug)}/media/`, params);
-        const data = await apiRequest<PaginatedResponse<ProjectMedia>>(url);
-        return assertPaginated(data);
-      },
-      () => {
-        const match = DEMO_PROJECTS.find((p) => p.slug === slug);
-        const items: ProjectMedia[] = match?.thumbnail
-          ? [
-              {
-                id: `${match.id}-still`,
-                caption: `${match.title} — Production Still`,
-                media_type: 'image',
-                image: match.thumbnail,
-              },
-            ]
-          : [];
-        return paginateDemo(items, params?.page ?? 1);
-      }
-    );
+    const url = buildApiUrl(`/projects/${encodeURIComponent(slug)}/media/`, params);
+    const data = await apiRequest<PaginatedResponse<ProjectMedia>>(url);
+    return assertPaginated(data);
   },
 
   async getStudioInfo(params?: { page?: number }): Promise<PaginatedResponse<StudioInfo>> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl('/studio/', params);
-        const data = await apiRequest<PaginatedResponse<StudioInfo>>(url);
-        return assertPaginated(data);
-      },
-      () => paginateDemo([DEMO_STUDIO], params?.page ?? 1)
-    );
+    const url = buildApiUrl('/studio/', params);
+    const data = await apiRequest<PaginatedResponse<StudioInfo>>(url);
+    return assertPaginated(data);
   },
 
   async getServices(params?: { page?: number }): Promise<PaginatedResponse<Service>> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl('/services/', params);
-        const data = await apiRequest<PaginatedResponse<Service>>(url);
-        return assertPaginated(data);
-      },
-      () => paginateDemo(DEMO_SERVICES, params?.page ?? 1)
-    );
+    const url = buildApiUrl('/services/', params);
+    const data = await apiRequest<PaginatedResponse<Service>>(url);
+    return assertPaginated(data);
   },
 
   async getInsights(params?: { page?: number }): Promise<PaginatedResponse<Insight>> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl('/insights/', params);
-        const data = await apiRequest<PaginatedResponse<Insight>>(url);
-        return assertPaginated(data);
-      },
-      () => paginateDemo(DEMO_INSIGHTS, params?.page ?? 1)
-    );
+    const url = buildApiUrl('/insights/', params);
+    const data = await apiRequest<PaginatedResponse<Insight>>(url);
+    return assertPaginated(data);
   },
 
   async getWorkCategories(params?: { page?: number }): Promise<PaginatedResponse<Category>> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl('/categories/', params);
-        const data = await apiRequest<PaginatedResponse<Category>>(url);
-        return assertPaginated(data);
-      },
-      () => paginateDemo(DEMO_WORK_CATEGORIES, params?.page ?? 1)
-    );
+    const url = buildApiUrl('/categories/', params);
+    const data = await apiRequest<PaginatedResponse<Category>>(url);
+    return assertPaginated(data);
   },
 
   async getWorkProjects(params?: {
     page?: number;
     category?: string | number;
   }): Promise<PaginatedResponse<Project>> {
-    return withDemoFallback(
-      async () => {
-        const url = buildApiUrl('/projects/', params);
-        const data = await apiRequest<PaginatedResponse<Project>>(url);
-        return assertPaginated(data);
-      },
-      () =>
-        paginateDemo(
-          filterDemoWorkProjects(
-            params?.category ? String(params.category) : null
-          ),
-          params?.page ?? 1
-        )
-    );
+    const url = buildApiUrl('/projects/', params);
+    const data = await apiRequest<PaginatedResponse<Project>>(url);
+    return assertPaginated(data);
   },
 
   /**
