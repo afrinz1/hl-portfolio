@@ -291,7 +291,7 @@ export async function apiRequest<T>(
   if (!response.ok) {
     if (response.status === 502 || response.status === 503) {
       throw new ApiError(
-        'Backend server unavailable (HTTP 502/503). Ensure the Django backend is running on http://127.0.0.1:8000 (e.g. run "python portfolio/manage.py runserver").',
+        'Backend server unavailable (HTTP 502/503). The API is unreachable or starting up — check that the Django backend is running and reachable at VITE_API_BASE_URL, then try again.',
         response.status
       );
     }

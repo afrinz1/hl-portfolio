@@ -75,9 +75,24 @@ SECRET_KEY = config("SECRET_KEY")
 
 DEBUG = config("DEBUG", default=True, cast=bool)
 
-ALLOWED_HOSTS = ["*"]
+# Behind a reverse proxy (Railway, Render, Heroku) TLS is terminated upstream
+# and the request reaches gunicorn over plain HTTP. Without trusting the
+# proxy's X-Forwarded-Proto header Django believes every request is insecure,
+# which turns SECURE_SSL_REDIRECT into an infinite redirect loop and stops
+# `secure` cookies (CSRF + refresh token) from ever being set.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+USE_X_FORWARDED_HOST = config("USE_X_FORWARDED_HOST", default=not DEBUG, cast=bool)
+
+# Comma-separated hosts. SQLite/local development keeps the permissive default;
+# set this explicitly in production (Railway adds the service's own hostnames
+# automatically, but listing them here is the safest option).
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="*", cast=Csv())
 
 
+# Origins allowed to send state-changing requests (exact scheme + host, no
+# trailing slash). Django 4+ validates the Origin/Referer header against this
+# list for unsafe methods, so the deployed SPA origin must be present.
 CSRF_TRUSTED_ORIGINS = config(
     "CSRF_TRUSTED_ORIGINS",
     default="http://localhost:3000,http://127.0.0.1:3000,http://192.168.1.73:3000",
@@ -92,6 +107,7 @@ CSRF_TRUSTED_ORIGINS = config(
 # API cross-origin it must send the CSRF cookie and the HttpOnly refresh
 # cookie, so credentials are allowed and origins are listed explicitly
 # (a wildcard is incompatible with credentialed requests).
+# In production add the deployed SPA origin, e.g. CORS_ALLOWED_ORIGINS.
 
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
@@ -149,7 +165,6 @@ MIDDLEWARE = [
     # Static files
     "whitenoise.middleware.WhiteNoiseMiddleware",
     # CORS
-    "corsheaders.middleware.CorsMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -351,10 +366,16 @@ CSRF_COOKIE_SECURE = config(
 # the cookie must stay readable by JavaScript.
 CSRF_COOKIE_HTTPONLY = False
 
-# SameSite=Lax covers the local proxy/LAN setup (same host, different port).
-# Use "None" (together with HTTPS and CSRF_COOKIE_SECURE=True) when the API is
-# served from a different site than the SPA.
-CSRF_COOKIE_SAMESITE = config("CSRF_COOKIE_SAMESITE", default="Lax")
+# SameSite: in development the SPA and API share the host (different port is
+# still "same site"), so "Lax" is enough. In production the SPA is served from
+# a different site than the API, and browsers drop "Lax" cookies from
+# cross-site fetch() responses — the CSRF cookie would never arrive and every
+# unsafe request would fail. "None" (+ HTTPS + *_COOKIE_SECURE=True) is
+# required there. Override with the CSRF_COOKIE_SAMESITE env var if needed.
+CSRF_COOKIE_SAMESITE = config(
+    "CSRF_COOKIE_SAMESITE",
+    default="Lax" if DEBUG else "None",
+)
 
 
 # ==========================================
@@ -404,7 +425,12 @@ SIMPLE_JWT = {
 JWT_AUTH_COOKIE = config("JWT_AUTH_COOKIE", default="hectic_refresh_token")
 JWT_AUTH_COOKIE_PATH = config("JWT_AUTH_COOKIE_PATH", default="/")
 JWT_AUTH_COOKIE_SECURE = config("JWT_AUTH_COOKIE_SECURE", default=not DEBUG, cast=bool)
-JWT_AUTH_COOKIE_SAMESITE = config("JWT_AUTH_COOKIE_SAMESITE", default="Lax")
+# SameSite="None" is required in production so the HttpOnly refresh cookie is
+# sent on cross-site Vercel → Railway requests. See CSRF_COOKIE_SAMESITE.
+JWT_AUTH_COOKIE_SAMESITE = config(
+    "JWT_AUTH_COOKIE_SAMESITE",
+    default="Lax" if DEBUG else "None",
+)
 
 
 # ==========================================
