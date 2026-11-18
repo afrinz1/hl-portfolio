@@ -407,7 +407,9 @@ export function getProjectCategorySlug(project: Project): string | null {
 }
 
 export function getMediaSource(item: ProjectMedia): string | null {
-  return resolveMediaUrl(item.file || item.url || item.video_url || item.video || item.image || null);
+  return resolveMediaUrl(
+    item.media_url || item.file || item.url || item.video_url || item.video || item.image || null
+  );
 }
 
 export function isMediaVideo(item: ProjectMedia): boolean {

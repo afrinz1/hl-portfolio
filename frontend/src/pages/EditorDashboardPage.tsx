@@ -35,6 +35,8 @@ import { HecticLogoMark } from '../components/Navbar';
 import { useAuth } from '../context/AuthContext';
 
 interface MediaDraft {
+  /** Present when the media row already exists on the server. */
+  id?: number | string;
   media_type: 'image' | 'video';
   media_url: string;
   poster_url: string;
@@ -69,8 +71,10 @@ export function EditorDashboardPage() {
   const [displayOrder, setDisplayOrder] = useState<number>(0);
   const [isSavingProject, setIsSavingProject] = useState(false);
 
-  // Media links attached while creating / editing a project
+  // Media attached while creating / editing a project
   const [mediaDrafts, setMediaDrafts] = useState<MediaDraft[]>([]);
+  const [mediaDraftsLoading, setMediaDraftsLoading] = useState(false);
+  const [removedMediaIds, setRemovedMediaIds] = useState<Array<number | string>>([]);
 
   // Media State
   const [mediaList, setMediaList] = useState<ProjectMedia[]>([]);
@@ -189,11 +193,12 @@ export function EditorDashboardPage() {
     setIsActive(true);
     setDisplayOrder(0);
     setMediaDrafts([]);
+    setRemovedMediaIds([]);
     setProjectModalOpen(true);
   };
 
   // Open Project Modal for Edit
-  const handleOpenEditProject = (proj: Project) => {
+  const handleOpenEditProject = async (proj: Project) => {
     setEditingProject(proj);
     setTitle(proj.title || '');
     setSlug(proj.slug || '');
@@ -210,10 +215,33 @@ export function EditorDashboardPage() {
     setIsActive(proj.active_status !== false);
     setDisplayOrder(proj.display_order ?? proj.order ?? 0);
     setMediaDrafts([]);
+    setRemovedMediaIds([]);
     setProjectModalOpen(true);
+
+    // Load the media already attached to this project so it can be edited/removed
+    setMediaDraftsLoading(true);
+    try {
+      const res = await hecticApi.getEditorMedia({ page: 1, project: proj.id });
+      setMediaDrafts(
+        (res.results ?? []).map((m) => ({
+          id: m.id,
+          media_type: m.media_type === 'video' ? 'video' : 'image',
+          media_url: m.media_url || m.url || '',
+          poster_url: m.poster_url || '',
+          caption: m.caption || '',
+        }))
+      );
+    } catch (err: unknown) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load project media.',
+      });
+    } finally {
+      setMediaDraftsLoading(false);
+    }
   };
 
-  // Media draft helpers (attach media while saving a project)
+  // Media draft helpers (attach / update media while saving a project)
   const addMediaDraft = () => {
     setMediaDrafts((prev) => [
       ...prev,
@@ -228,6 +256,10 @@ export function EditorDashboardPage() {
   };
 
   const removeMediaDraft = (index: number) => {
+    const draft = mediaDrafts[index];
+    if (draft?.id !== undefined) {
+      setRemovedMediaIds((ids) => [...ids, draft.id as number | string]);
+    }
     setMediaDrafts((prev) => prev.filter((_, i) => i !== index));
   };
 
@@ -258,20 +290,31 @@ export function EditorDashboardPage() {
         ? await hecticApi.updateProject(editingProject.slug || editingProject.id, payload)
         : await hecticApi.createProject(payload);
 
-      // Attach any media links added alongside the project
-      const pendingMedia = mediaDrafts.filter((draft) => draft.media_url.trim());
-      for (const draft of pendingMedia) {
-        await hecticApi.createMedia({
+      // Create new media rows, update existing ones, then apply deletions
+      let mediaCount = 0;
+      for (const draft of mediaDrafts) {
+        const url = draft.media_url.trim();
+        if (!url) continue;
+        const mediaPayload: EditorMediaPayload = {
           project: saved.id,
           media_type: draft.media_type,
-          media_url: draft.media_url.trim(),
-          poster_url: draft.poster_url.trim() || undefined,
-          caption: draft.caption.trim() || undefined,
+          media_url: url,
+          poster_url: draft.poster_url.trim(),
+          caption: draft.caption.trim(),
           display_order: 0,
-        });
+        };
+        if (draft.id !== undefined) {
+          await hecticApi.updateMedia(draft.id, mediaPayload);
+        } else {
+          await hecticApi.createMedia(mediaPayload);
+        }
+        mediaCount += 1;
+      }
+      for (const mediaId of removedMediaIds) {
+        await hecticApi.deleteMedia(mediaId);
       }
 
-      const mediaNote = pendingMedia.length ? ` with ${pendingMedia.length} media item(s)` : '';
+      const mediaNote = mediaCount ? ` (${mediaCount} media item(s) saved)` : '';
       setFeedback({
         type: 'success',
         message: editingProject
@@ -280,6 +323,7 @@ export function EditorDashboardPage() {
       });
       setProjectModalOpen(false);
       setMediaDrafts([]);
+      setRemovedMediaIds([]);
       await loadProjectsAndCategories();
     } catch (err: unknown) {
       setFeedback({
@@ -1149,10 +1193,12 @@ export function EditorDashboardPage() {
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
                     <span className="block uppercase text-[10px] text-[#111110]/70">
-                      Project Media (Optional)
+                      Project Media {editingProject ? '' : '(Optional)'}
                     </span>
                     <span className="text-[10px] text-[#111110]/50">
-                      Attach video / image links stored in project media.
+                      {editingProject
+                        ? 'Update or remove the media attached to this project.'
+                        : 'Attach video / image links stored in project media.'}
                     </span>
                   </div>
                   <button
@@ -1165,15 +1211,17 @@ export function EditorDashboardPage() {
                   </button>
                 </div>
 
-                {mediaDrafts.length === 0 ? (
+                {mediaDraftsLoading ? (
+                  <p className="text-[10px] text-[#111110]/50">Loading existing media…</p>
+                ) : mediaDrafts.length === 0 ? (
                   <p className="text-[10px] text-[#111110]/50">
-                    No media added yet. You can also manage media later from the Project Media tab.
+                    No media yet. Click "Add Media Link" to attach a video or image.
                   </p>
                 ) : (
                   <div className="space-y-3">
                     {mediaDrafts.map((draft, index) => (
                       <div
-                        key={`media-draft-${index}`}
+                        key={draft.id ?? `media-draft-${index}`}
                         className="rounded-xl border border-[#111110]/10 bg-white p-3 space-y-2"
                       >
                         <div className="flex items-center gap-2">
@@ -1225,6 +1273,12 @@ export function EditorDashboardPage() {
                             className="rounded-lg bg-[#faf9f5] border border-[#111110]/15 px-3 py-1.5 text-[11px] text-[#111110] focus:bg-white focus:border-[#14bfb9] focus:outline-none"
                           />
                         </div>
+
+                        {draft.id !== undefined && (
+                          <span className="inline-block rounded-md border border-[#14bfb9]/30 bg-[#14bfb9]/15 px-2 py-0.5 text-[9px] font-mono-hl uppercase tracking-wider text-[#0c7c76]">
+                            Saved
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>
