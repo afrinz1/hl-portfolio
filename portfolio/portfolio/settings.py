@@ -313,9 +313,23 @@ WHITENOISE_MANIFEST_STRICT = False
 # EMAIL CONFIGURATION
 # ==========================================
 
+# Railway blocks outbound SMTP on its Free/Trial/Hobby plans, and it drops the
+# packets instead of refusing them: an SMTP send does not fail, it hangs until
+# the worker is killed. Mail therefore goes out over Resend's HTTPS API (port
+# 443, never blocked) via inquiries.email_backend. The SMTP settings below are
+# kept so the transport can be switched back with env vars alone, e.g. after
+# upgrading to a plan that allows SMTP:
+#   EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 EMAIL_BACKEND = config(
     "EMAIL_BACKEND",
-    default="django.core.mail.backends.smtp.EmailBackend",
+    default="inquiries.email_backend.ResendEmailBackend",
+)
+
+# Resend API key (https://resend.com/api-keys). When unset nothing is sent and
+# inquiries are still accepted — see inquiries.utils._mail_configured.
+RESEND_API_KEY = config(
+    "RESEND_API_KEY",
+    default="",
 )
 
 EMAIL_HOST = config(
@@ -345,17 +359,27 @@ EMAIL_HOST_PASSWORD = config(
     default="",
 )
 
-# Bound the SMTP connection so an unreachable mail host cannot stall a request
-# thread indefinitely (notifications are sent inline during inquiry creation).
+# Bounds both the SMTP socket and the Resend HTTPS request, so a mail host that
+# stops responding cannot hold a request thread open indefinitely.
 EMAIL_TIMEOUT = config(
     "EMAIL_TIMEOUT",
     default=10,
     cast=int,
 )
 
+# Must be a sender verified in Resend (Resend only accepts a From on a verified
+# domain). Resend's shared onboarding@resend.dev is a sandbox that delivers to
+# the account owner's own inbox only, so it is a starting point, not a fix.
 DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL",
-    default=EMAIL_HOST_USER or "webmaster@localhost",
+    default="onboarding@resend.dev",
+)
+
+# Where new-inquiry notifications are delivered. Falls back to the studio
+# contact email when unset.
+INQUIRY_NOTIFICATION_EMAIL = config(
+    "INQUIRY_NOTIFICATION_EMAIL",
+    default="",
 )
 
 
