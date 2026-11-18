@@ -345,6 +345,14 @@ EMAIL_HOST_PASSWORD = config(
     default="",
 )
 
+# Bound the SMTP connection so an unreachable mail host cannot stall a request
+# thread indefinitely (notifications are sent inline during inquiry creation).
+EMAIL_TIMEOUT = config(
+    "EMAIL_TIMEOUT",
+    default=10,
+    cast=int,
+)
+
 DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL",
     default=EMAIL_HOST_USER or "webmaster@localhost",

@@ -1,9 +1,33 @@
+import logging
+
 from django.core.mail import send_mail
 from django.conf import settings
 from studio.models import StudioSettings
 
+logger = logging.getLogger(__name__)
+
+
+def _smtp_configured() -> bool:
+    """Whether outbound mail can actually be sent.
+
+    The configured backend is SMTP (smtp.gmail.com by default), which needs an
+    authenticated mailbox. Without credentials a send can only block on a
+    connection that will never succeed — and because notifications are sent
+    inline during inquiry creation, that would stall (or time out) the whole
+    request even though the inquiry itself was already saved.
+    """
+    return bool(settings.EMAIL_HOST_USER)
+
 
 def send_client_acknowledgement(inquiry):
+
+    if not _smtp_configured():
+        logger.warning(
+            "Skipped client acknowledgement for inquiry %s: SMTP is not "
+            "configured (EMAIL_HOST_USER is empty).",
+            inquiry.pk,
+        )
+        return
 
     subject = "We've received your inquiry | Hectic Labs"
 
@@ -31,6 +55,14 @@ def send_client_acknowledgement(inquiry):
 
 
 def send_admin_notification(inquiry):
+
+    if not _smtp_configured():
+        logger.warning(
+            "Skipped admin notification for inquiry %s: SMTP is not "
+            "configured (EMAIL_HOST_USER is empty).",
+            inquiry.pk,
+        )
+        return
 
     studio = StudioSettings.objects.first()
 

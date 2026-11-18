@@ -57,6 +57,32 @@ export function InquiryPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // The form is `noValidate`, so the browser's required/type checks are
+    // bypassed and an incomplete form would otherwise reach the API and come
+    // back as a 400. Validate here so the user gets inline, actionable errors.
+    const errors: FieldErrors = {};
+    if (!name.trim()) {
+      errors.name = ['Please enter your name.'];
+    }
+    if (!email.trim()) {
+      errors.email = ['Please enter your email address.'];
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      errors.email = ['Enter a valid email address.'];
+    }
+    if (services.length > 0 && !serviceId) {
+      errors.service = ['Please select a service.'];
+    }
+    if (!message.trim()) {
+      errors.message = ['Please tell us about your project.'];
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setSubmitError('Please complete the required fields below.');
+      return;
+    }
+
     setSubmitting(true);
     setSubmitSuccess(false);
     setSubmitError(null);
@@ -66,11 +92,11 @@ export function InquiryPage() {
       await hecticApi.submitInquiry({
         name: name.trim(),
         email: email.trim(),
-        service: Number.isFinite(Number(serviceId)) && serviceId !== ''
-          ? Number(serviceId)
-          : serviceId,
+        // Only send a service when one is actually chosen — an empty string is
+        // rejected by the API ("Invalid pk").
+        ...(serviceId ? { service: Number(serviceId) } : {}),
         ...(company.trim() ? { company: company.trim() } : {}),
-        ...(budget.trim() ? { budget: budget.trim() } : {}),
+        ...(budget.trim() ? { budget_range: budget.trim() } : {}),
         message: message.trim(),
       });
 
@@ -105,7 +131,7 @@ export function InquiryPage() {
     );
   };
 
-  const knownFields = new Set(['name', 'email', 'company', 'service', 'budget', 'message']);
+  const knownFields = new Set(['name', 'email', 'company', 'service', 'budget_range', 'message']);
   const extraFieldErrors = Object.entries(fieldErrors).filter(
     ([key]) => !knownFields.has(key)
   );
@@ -317,7 +343,7 @@ export function InquiryPage() {
                     placeholder="Optional"
                     className="mt-2 w-full border-b border-[#0a0a0b]/30 bg-transparent py-3 text-[15px] text-[#0a0a0b] placeholder:text-[#0a0a0b]/35 focus:border-[#0a0a0b] focus:outline-none"
                   />
-                  {renderFieldError('budget')}
+                  {renderFieldError('budget_range')}
                 </div>
 
                 <div>

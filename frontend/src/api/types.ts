@@ -139,10 +139,10 @@ export interface Insight {
 export interface InquiryPayload {
   name: string;
   email: string;
-  service: number | string;
+  service?: number | string;
   company?: string;
   phone?: string;
-  budget?: string;
+  budget_range?: string;
   message: string;
 }
 
