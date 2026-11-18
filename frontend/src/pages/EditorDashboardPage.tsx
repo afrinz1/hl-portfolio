@@ -34,6 +34,13 @@ import type {
 import { HecticLogoMark } from '../components/Navbar';
 import { useAuth } from '../context/AuthContext';
 
+interface MediaDraft {
+  media_type: 'image' | 'video';
+  media_url: string;
+  poster_url: string;
+  caption: string;
+}
+
 export function EditorDashboardPage() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -61,6 +68,9 @@ export function EditorDashboardPage() {
   const [isActive, setIsActive] = useState(true);
   const [displayOrder, setDisplayOrder] = useState<number>(0);
   const [isSavingProject, setIsSavingProject] = useState(false);
+
+  // Media links attached while creating / editing a project
+  const [mediaDrafts, setMediaDrafts] = useState<MediaDraft[]>([]);
 
   // Media State
   const [mediaList, setMediaList] = useState<ProjectMedia[]>([]);
@@ -178,6 +188,7 @@ export function EditorDashboardPage() {
     setIsPublished(true);
     setIsActive(true);
     setDisplayOrder(0);
+    setMediaDrafts([]);
     setProjectModalOpen(true);
   };
 
@@ -198,7 +209,26 @@ export function EditorDashboardPage() {
     setIsPublished(proj.status !== false);
     setIsActive(proj.active_status !== false);
     setDisplayOrder(proj.display_order ?? proj.order ?? 0);
+    setMediaDrafts([]);
     setProjectModalOpen(true);
+  };
+
+  // Media draft helpers (attach media while saving a project)
+  const addMediaDraft = () => {
+    setMediaDrafts((prev) => [
+      ...prev,
+      { media_type: 'video', media_url: '', poster_url: '', caption: '' },
+    ]);
+  };
+
+  const updateMediaDraft = (index: number, patch: Partial<MediaDraft>) => {
+    setMediaDrafts((prev) =>
+      prev.map((draft, i) => (i === index ? { ...draft, ...patch } : draft))
+    );
+  };
+
+  const removeMediaDraft = (index: number) => {
+    setMediaDrafts((prev) => prev.filter((_, i) => i !== index));
   };
 
   // Save Project (Create or Update)
@@ -224,14 +254,32 @@ export function EditorDashboardPage() {
     };
 
     try {
-      if (editingProject) {
-        await hecticApi.updateProject(editingProject.slug || editingProject.id, payload);
-        setFeedback({ type: 'success', message: `Updated project "${payload.title}".` });
-      } else {
-        await hecticApi.createProject(payload);
-        setFeedback({ type: 'success', message: `Created new project "${payload.title}".` });
+      const saved = editingProject
+        ? await hecticApi.updateProject(editingProject.slug || editingProject.id, payload)
+        : await hecticApi.createProject(payload);
+
+      // Attach any media links added alongside the project
+      const pendingMedia = mediaDrafts.filter((draft) => draft.media_url.trim());
+      for (const draft of pendingMedia) {
+        await hecticApi.createMedia({
+          project: saved.id,
+          media_type: draft.media_type,
+          media_url: draft.media_url.trim(),
+          poster_url: draft.poster_url.trim() || undefined,
+          caption: draft.caption.trim() || undefined,
+          display_order: 0,
+        });
       }
+
+      const mediaNote = pendingMedia.length ? ` with ${pendingMedia.length} media item(s)` : '';
+      setFeedback({
+        type: 'success',
+        message: editingProject
+          ? `Updated project "${payload.title}"${mediaNote}.`
+          : `Created project "${payload.title}"${mediaNote}.`,
+      });
       setProjectModalOpen(false);
+      setMediaDrafts([]);
       await loadProjectsAndCategories();
     } catch (err: unknown) {
       setFeedback({
@@ -1095,6 +1143,92 @@ export function EditorDashboardPage() {
                   placeholder="Cinematic overview, creative approach, and production notes..."
                   className="w-full rounded-xl bg-[#faf9f5] border border-[#111110]/15 px-3.5 py-2.5 text-xs text-[#111110] focus:bg-white focus:border-[#14bfb9] focus:outline-none"
                 />
+              </div>
+
+              <div className="rounded-2xl border border-[#111110]/10 bg-[#faf9f5] p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <span className="block uppercase text-[10px] text-[#111110]/70">
+                      Project Media (Optional)
+                    </span>
+                    <span className="text-[10px] text-[#111110]/50">
+                      Attach video / image links stored in project media.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addMediaDraft}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[#111110]/15 bg-white px-2.5 py-1.5 text-[10px] uppercase tracking-wider text-[#111110] hover:bg-[#f4f3ee] transition-colors cursor-pointer"
+                  >
+                    <Plus className="h-3 w-3" />
+                    <span>Add Media Link</span>
+                  </button>
+                </div>
+
+                {mediaDrafts.length === 0 ? (
+                  <p className="text-[10px] text-[#111110]/50">
+                    No media added yet. You can also manage media later from the Project Media tab.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {mediaDrafts.map((draft, index) => (
+                      <div
+                        key={`media-draft-${index}`}
+                        className="rounded-xl border border-[#111110]/10 bg-white p-3 space-y-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <select
+                            aria-label={`Media type ${index + 1}`}
+                            value={draft.media_type}
+                            onChange={(e) =>
+                              updateMediaDraft(index, {
+                                media_type: e.target.value as 'image' | 'video',
+                              })
+                            }
+                            className="rounded-lg bg-[#faf9f5] border border-[#111110]/15 px-2.5 py-1.5 text-[11px] text-[#111110] focus:outline-none focus:border-[#14bfb9]"
+                          >
+                            <option value="video">Video / Film</option>
+                            <option value="image">Image / Still</option>
+                          </select>
+
+                          <input
+                            type="url"
+                            value={draft.media_url}
+                            onChange={(e) => updateMediaDraft(index, { media_url: e.target.value })}
+                            placeholder="https://... video or image URL"
+                            className="flex-1 rounded-lg bg-[#faf9f5] border border-[#111110]/15 px-3 py-1.5 text-[11px] text-[#111110] focus:bg-white focus:border-[#14bfb9] focus:outline-none"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => removeMediaDraft(index)}
+                            title="Remove media"
+                            className="rounded-lg p-1.5 text-[#111110]/50 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <input
+                            type="url"
+                            value={draft.poster_url}
+                            onChange={(e) => updateMediaDraft(index, { poster_url: e.target.value })}
+                            placeholder="Poster URL (optional)"
+                            className="rounded-lg bg-[#faf9f5] border border-[#111110]/15 px-3 py-1.5 text-[11px] text-[#111110] focus:bg-white focus:border-[#14bfb9] focus:outline-none"
+                          />
+                          <input
+                            type="text"
+                            value={draft.caption}
+                            onChange={(e) => updateMediaDraft(index, { caption: e.target.value })}
+                            placeholder="Caption (optional)"
+                            className="rounded-lg bg-[#faf9f5] border border-[#111110]/15 px-3 py-1.5 text-[11px] text-[#111110] focus:bg-white focus:border-[#14bfb9] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-6 pt-2">
