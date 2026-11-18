@@ -95,7 +95,10 @@ ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="*", cast=Csv())
 # list for unsafe methods, so the deployed SPA origin must be present.
 CSRF_TRUSTED_ORIGINS = config(
     "CSRF_TRUSTED_ORIGINS",
-    default="http://localhost:3000,http://127.0.0.1:3000,http://192.168.1.73:3000",
+    default=(
+        "http://localhost:3000,http://127.0.0.1:3000,http://192.168.1.73:3000,"
+        "https://hectic-labs.vercel.app"
+    ),
     cast=Csv(),
 )
 
@@ -111,7 +114,10 @@ CSRF_TRUSTED_ORIGINS = config(
 
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
-    default="http://localhost:3000,http://127.0.0.1:3000,http://192.168.1.73:3000",
+    default=(
+        "http://localhost:3000,http://127.0.0.1:3000,http://192.168.1.73:3000,"
+        "https://hectic-labs.vercel.app"
+    ),
     cast=Csv(),
 )
 
