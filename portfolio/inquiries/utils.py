@@ -1,7 +1,7 @@
 import logging
 
-from django.core.mail import send_mail
 from django.conf import settings
+from django.core.mail import EmailMessage
 from studio.models import StudioSettings
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,16 @@ def _mail_configured() -> bool:
     if backend.endswith("ResendEmailBackend"):
         return bool(settings.RESEND_API_KEY)
     return bool(settings.EMAIL_HOST_USER)
+
+
+def _studio_inbox() -> str:
+    """The studio's own address, or "" when it cannot be determined.
+
+    Notifications are delivered here, and it is the Reply-To on the client
+    acknowledgement.
+    """
+    studio = StudioSettings.objects.first()
+    return settings.INQUIRY_NOTIFICATION_EMAIL or (studio.email if studio else "")
 
 
 def send_client_acknowledgement(inquiry):
@@ -50,12 +60,17 @@ def send_client_acknowledgement(inquiry):
     Hectic Labs
     """
 
-    send_mail(
+    # Resend only accepts a From on a verified domain, so the sending address is
+    # not one a client can usefully reply to. Point replies at the studio inbox.
+    inbox = _studio_inbox()
+
+    EmailMessage(
         subject,
         message,
         settings.DEFAULT_FROM_EMAIL,
-        [inquiry.email]
-    )
+        [inquiry.email],
+        reply_to=[inbox] if inbox else None,
+    ).send()
 
 
 def send_admin_notification(inquiry):
@@ -69,13 +84,7 @@ def send_admin_notification(inquiry):
         )
         return
 
-    studio = StudioSettings.objects.first()
-
-    # The studio's address is public-facing contact information, so where
-    # notifications land is configurable independently of it.
-    recipient = settings.INQUIRY_NOTIFICATION_EMAIL or (
-        studio.email if studio else ""
-    )
+    recipient = _studio_inbox()
 
     if not recipient:
         logger.warning(
@@ -99,9 +108,11 @@ def send_admin_notification(inquiry):
     {inquiry.message}
     """
 
-    send_mail(
+    # Reply-To the submitter so the studio can answer straight from the inbox.
+    EmailMessage(
         subject,
         message,
         settings.DEFAULT_FROM_EMAIL,
-        [recipient]
-    )
+        [recipient],
+        reply_to=[inquiry.email] if inquiry.email else None,
+    ).send()

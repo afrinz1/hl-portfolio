@@ -375,11 +375,13 @@ DEFAULT_FROM_EMAIL = config(
     default="onboarding@resend.dev",
 )
 
-# Where new-inquiry notifications are delivered. Falls back to the studio
+# The studio's own mailbox: where new-inquiry notifications are delivered and
+# what the acknowledgement is sent with as its Reply-To, so a client who replies
+# reaches the studio instead of the no-reply sender. Falls back to the studio
 # contact email when unset.
 INQUIRY_NOTIFICATION_EMAIL = config(
     "INQUIRY_NOTIFICATION_EMAIL",
-    default="",
+    default="hecticlabs1@gmail.com",
 )
 
 
