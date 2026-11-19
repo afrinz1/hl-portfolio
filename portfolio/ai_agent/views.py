@@ -2,35 +2,27 @@
 # as possible without breaking existing behaviour or introducing another vector DB.
 from __future__ import annotations
 
-import json
 import logging
 import time
-from itertools import chain
 from typing import Any, Dict, List
 
-from django.conf import settings
-from django.http import StreamingHttpResponse
 try:
     from google.genai import errors as genai_errors
-    from google.genai import types
 except ImportError:
     class _MockAPIError(Exception):
         pass
 
     genai_errors = type("genai_errors", (), {"APIError": _MockAPIError})
-    types = None
 
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
-from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework import status
 
 from .models import ChatSession, ChatMessage
 from .serializer import ChatRequestSerializer, ProjectSearchRequestSerializer
 from .utils import (
-    _select_gemini_chat_model,
     build_gemini_context,
     generate_chat_response,
     get_public_projects,
@@ -64,48 +56,6 @@ def _provider_error_response(exc: genai_errors.APIError) -> Response:
         },
         status=status.HTTP_502_BAD_GATEWAY,
     )
-
-
-def _stream_error_frame(code: str, message: str, retryable: bool) -> str:
-    return json.dumps(
-        {
-            "type": "error",
-            "error": message,
-            "code": code,
-            "retryable": retryable,
-        }
-    ) + "\n"
-
-
-class NDJSONRenderer(BaseRenderer):
-    """
-    Renderer for newline-delimited JSON (``application/x-ndjson``).
-
-    DRF's content negotiation only advertises media types that at least one
-    configured renderer declares. Without a renderer for
-    ``application/x-ndjson`` a request that sends
-    ``Accept: application/x-ndjson`` is rejected with ``406 Not Acceptable``
-    before the view handler ever runs. Declaring this renderer lets the
-    negotiation succeed for the streaming endpoint.
-
-    ``StreamingHttpResponse`` bodies are not passed through ``render()`` -- DRF
-    only renders its own ``Response`` objects -- so this method is reached for
-    the streaming view's own plain ``Response`` errors and returns a single
-    valid NDJSON record for those.
-    """
-
-    media_type = "application/x-ndjson"
-    format = "ndjson"
-    charset = "utf-8"
-
-    def render(self, data, accepted_media_type=None, renderer_context=None):
-        if data is None:
-            return b""
-        if isinstance(data, bytes):
-            return data
-        if isinstance(data, str):
-            return data.encode(self.charset)
-        return (json.dumps(data) + "\n").encode(self.charset)
 
 
 # ---------------------------------------------------------------------------
@@ -264,212 +214,6 @@ class PortfolioChatView(APIView):
                 }
             )
         return results
-
-
-# ---------------------------------------------------------------------------
-# Streaming chat view.
-#
-# The existing non-streaming endpoint is intentionally left untouched so that
-# the current frontend keeps working. This endpoint returns a
-# newline-delimited JSON stream of conversation fragments, letting the browser
-# show the answer progressively. It is available on its own URL so the existing
-# frontend's behaviour is not changed.
-# ---------------------------------------------------------------------------
-
-
-class PortfolioChatStreamView(APIView):
-    permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "portfolio_chat"
-
-    # ``application/x-ndjson`` is what the browser streaming client asks for in
-    # its Accept header. JSONRenderer stays available so a client that asks for
-    # ``application/json`` (or sends no Accept header at all) still gets a
-    # negotiable response instead of a 406.
-    renderer_classes = [NDJSONRenderer, JSONRenderer]
-
-    def post(self, request):
-        serializer = ChatRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        message = serializer.validated_data["message"]
-        session_id = serializer.validated_data.get("session_id")
-        visitor_token = serializer.validated_data.get("visitor_token")
-
-        if session_id and visitor_token:
-            session = ChatSession.objects.filter(
-                id=session_id,
-                visitor_token=visitor_token,
-                is_active=True,
-            ).first()
-            if not session:
-                return Response(
-                    {"error": "Invalid or expired chat session."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            chat_session = session
-        else:
-            chat_session = ChatSession.objects.create()
-
-        history_messages = list(
-            chat_session.messages.order_by("-created_at")[:10]
-        )
-        history_messages.reverse()
-        history = [
-            {"role": item.role, "content": item.content}
-            for item in history_messages
-        ]
-
-        ChatMessage.objects.create(
-            session=chat_session,
-            role="user",
-            content=message,
-        )
-
-        # Build the direct-context prompt for streaming.
-        prompt = build_gemini_context(
-            question=message,
-            history=history,
-            max_history_turns=10,
-        )
-
-        # The stream leads with the session identifiers so the client can keep
-        # sending the same session on the next message. Without this frame the
-        # streaming client would start a fresh conversation every turn.
-        session_frame = (
-            json.dumps(
-                {
-                    "type": "session",
-                    "session_id": str(chat_session.id),
-                    "visitor_token": str(chat_session.visitor_token),
-                }
-            )
-            + "\n"
-        )
-
-        chunks = self._stream_response(prompt, chat_session, history, message)
-        try:
-            first_chunk = next(chunks)
-        except StopIteration:
-            return StreamingHttpResponse(
-                (session_frame,),
-                content_type="application/x-ndjson",
-            )
-        except genai_errors.APIError as exc:
-            logger.exception("Gemini streaming API error: %s", exc)
-            return _provider_error_response(exc)
-        except Exception:
-            logger.exception("Portfolio assistant streaming failed")
-            return Response(
-                {
-                    "error": "Something went wrong while generating your response.",
-                    "code": "INTERNAL_ASSISTANT_ERROR",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        return StreamingHttpResponse(
-            chain((session_frame, first_chunk), chunks),
-            content_type="application/x-ndjson",
-        )
-
-    def _stream_response(
-        self,
-        prompt: str,
-        session: ChatSession,
-        history: List[Dict[str, str]],
-        user_message: str,
-    ):
-        """
-        Stream generated text back to the client.
-
-        We do NOT create a second model instance per chunk. The single Gemini
-        client is reused, and the stream is consumed in a generator that only
-        yields text as it arrives.
-        """
-        from .utils import (
-            _format_assistant_chat_chunks,
-            get_gemini_client,
-        )
-
-        client = get_gemini_client()
-        primary_model = _select_gemini_chat_model()
-        fallback_model = getattr(
-            settings,
-            "GEMINI_CHAT_FALLBACK_MODEL",
-            "",
-        ).strip()
-
-        # Prepare the streaming generation. We use the same config as the
-        # non-streaming path, plus a higher token budget for the live UI.
-        config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_level="low"),
-            max_output_tokens=1500,
-        )
-
-        attempted_models = [primary_model]
-        if fallback_model and fallback_model != primary_model:
-            attempted_models.append(fallback_model)
-
-        for model_index, model in enumerate(attempted_models):
-            full_answer = []
-            emitted = False
-            completed = False
-            try:
-                response = client.models.generate_content_stream(
-                    model=model,
-                    contents=prompt,
-                    config=config,
-                )
-                for chunk in response:
-                    if chunk.text:
-                        full_answer.append(chunk.text)
-                    for event in _format_assistant_chat_chunks(chunk):
-                        emitted = True
-                        yield json.dumps(event) + "\n"
-                completed = True
-                break
-            except genai_errors.APIError as exc:
-                can_fallback = (
-                    model_index == 0
-                    and not emitted
-                    and exc.code in _RETRYABLE_PROVIDER_CODES
-                    and len(attempted_models) > 1
-                )
-                if can_fallback:
-                    logger.warning(
-                        "Gemini streaming model %s unavailable; trying fallback.",
-                        model,
-                    )
-                    continue
-                if not emitted:
-                    raise
-                logger.exception("Gemini streaming API error: %s", exc)
-                response = _provider_error_response(exc)
-                yield _stream_error_frame(
-                    response.data["code"],
-                    response.data["error"],
-                    response.data.get("retryable", False),
-                )
-                return
-            except Exception:
-                if not emitted:
-                    raise
-                logger.exception("Portfolio assistant streaming failed")
-                yield _stream_error_frame(
-                    "INTERNAL_ASSISTANT_ERROR",
-                    "Something went wrong while generating your response.",
-                    False,
-                )
-                return
-            finally:
-                assistant_text = "".join(full_answer)
-                if completed and assistant_text:
-                    ChatMessage.objects.create(
-                        session=session,
-                        role="assistant",
-                        content=assistant_text,
-                    )
 
 
 # ---------------------------------------------------------------------------

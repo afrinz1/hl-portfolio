@@ -428,6 +428,20 @@ CSRF_COOKIE_SAMESITE = config(
 # ==========================================
 
 REST_FRAMEWORK = {
+    # The browsable HTML API (BrowsableAPIRenderer) loads DRF's own static
+    # assets via {% static %}. In production those are not collected into
+    # WhiteNoise's manifest, so any HTML-rendered API response (e.g. the
+    # `/api/v1/` API-root view) crashes with a 500. It is also a public
+    # information-disclosure surface, so it is limited to DEBUG.
+    "DEFAULT_RENDERER_CLASSES": (
+        ["rest_framework.renderers.JSONRenderer"]
+        if not DEBUG
+        else [
+            "rest_framework.renderers.JSONRenderer",
+            "rest_framework.renderers.BrowsableAPIRenderer",
+        ]
+    ),
+
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",

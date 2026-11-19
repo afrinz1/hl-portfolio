@@ -146,29 +146,6 @@ def get_gemini_client() -> genai.Client:
 
 
 # ---------------------------------------------------------------------------
-# Streaming request formatters.
-# ---------------------------------------------------------------------------
-
-
-def _format_assistant_chat_chunks(
-    chunk,
-) -> Iterable[Dict[str, str]]:
-    """
-    Yield a minimal, JSON-serializable record per generated chunk.
-
-    The streaming endpoint is a simple Line-Delimited JSON contract that any
-    frontend client can consume. We deliberately do not change the existing
-    non-streaming chat endpoint, which keeps the existing frontend working.
-    """
-    if chunk.text:
-        yield {"type": "text", "text": chunk.text}
-    elif chunk.name:
-        yield {"type": "metadata", "name": chunk.name}
-    else:
-        yield {"type": "done"}
-
-
-# ---------------------------------------------------------------------------
 # Direct-context retrieval (no embeddings, no vector search).
 # ---------------------------------------------------------------------------
 
