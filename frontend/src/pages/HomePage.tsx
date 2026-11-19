@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { hecticApi } from '../api/hecticApi';
-import type { Project, StudioInfo } from '../api/types';
+import type { Project, Service, StudioInfo } from '../api/types';
 import { CategoryTunnelSection } from '../components/CategoryTunnelSection';
 import { InquiryCta } from '../components/InquiryCta';
 import { CyanFooter } from '../components/CyanFooter';
@@ -13,17 +13,20 @@ export function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [totalProjects, setTotalProjects] = useState<number | null>(null);
   const [studio, setStudio] = useState<StudioInfo | null>(null);
+  const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadStudioContext = useCallback(async () => {
     setLoading(true);
     try {
-      const [studioRes, projectsRes] = await Promise.all([
+      const [studioRes, projectsRes, servicesRes] = await Promise.all([
         hecticApi.getStudioInfo({ page: 1 }).catch(() => null),
         hecticApi.getProjects({ page: 1 }).catch(() => null),
+        hecticApi.getServices({ page: 1 }).catch(() => null),
       ]);
       setStudio(studioRes?.results[0] ?? null);
       setProjects(projectsRes?.results ?? []);
+      setServices(servicesRes?.results ?? []);
       setTotalProjects(
         typeof projectsRes?.count === 'number' ? projectsRes.count : null
       );
@@ -48,6 +51,7 @@ export function HomePage() {
         <StudioTrustSection
           studio={studio}
           projects={projects}
+          services={services}
           totalProjects={totalProjects}
           loading={loading}
         />

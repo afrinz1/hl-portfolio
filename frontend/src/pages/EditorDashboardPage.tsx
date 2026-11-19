@@ -43,6 +43,51 @@ interface MediaDraft {
   caption: string;
 }
 
+/**
+ * The editor lists must reflect the whole database, not just the first page.
+ * The shared paginator serves 20 rows per page, so fetching a single page
+ * silently hides everything beyond it (and makes the totals on this dashboard
+ * disagree with the public pages, which report the API's real `count`).
+ * These helpers walk every page before the dashboard renders its totals.
+ */
+async function fetchAllEditorProjects(): Promise<Project[]> {
+  const first = await hecticApi.getEditorProjects({ page: 1 });
+  const combined: Project[] = [...(first.results ?? [])];
+  let next = first.next;
+  let page = 2;
+
+  while (next) {
+    const res = await hecticApi.getEditorProjects({ page });
+    const batch = res.results ?? [];
+    if (batch.length === 0) break;
+    combined.push(...batch);
+    next = res.next;
+    page += 1;
+  }
+
+  return combined;
+}
+
+async function fetchAllEditorMedia(params: {
+  project?: string | number;
+}): Promise<ProjectMedia[]> {
+  const first = await hecticApi.getEditorMedia({ page: 1, ...params });
+  const combined: ProjectMedia[] = [...(first.results ?? [])];
+  let next = first.next;
+  let page = 2;
+
+  while (next) {
+    const res = await hecticApi.getEditorMedia({ page, ...params });
+    const batch = res.results ?? [];
+    if (batch.length === 0) break;
+    combined.push(...batch);
+    next = res.next;
+    page += 1;
+  }
+
+  return combined;
+}
+
 export function EditorDashboardPage() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -107,11 +152,11 @@ export function EditorDashboardPage() {
   const loadProjectsAndCategories = useCallback(async () => {
     setProjectsLoading(true);
     try {
-      const [projRes, catRes] = await Promise.all([
-        hecticApi.getEditorProjects({ page: 1 }),
+      const [allProjects, catRes] = await Promise.all([
+        fetchAllEditorProjects(),
         hecticApi.getEditorCategories({ page: 1 }).catch(() => hecticApi.getCategories({ page: 1 })),
       ]);
-      setProjects(projRes.results ?? []);
+      setProjects(allProjects);
       setCategories(catRes.results ?? []);
       if (catRes.results?.length && !categoryId) {
         setCategoryId(catRes.results[0].id);
@@ -130,11 +175,8 @@ export function EditorDashboardPage() {
   const loadMedia = useCallback(async (projectId?: string | number) => {
     setMediaLoading(true);
     try {
-      const res = await hecticApi.getEditorMedia({
-        page: 1,
-        project: projectId || undefined,
-      });
-      setMediaList(res.results ?? []);
+      const list = await fetchAllEditorMedia({ project: projectId || undefined });
+      setMediaList(list);
     } catch (err: unknown) {
       setFeedback({
         type: 'error',
@@ -221,9 +263,9 @@ export function EditorDashboardPage() {
     // Load the media already attached to this project so it can be edited/removed
     setMediaDraftsLoading(true);
     try {
-      const res = await hecticApi.getEditorMedia({ page: 1, project: proj.id });
+      const media = await fetchAllEditorMedia({ project: proj.id });
       setMediaDrafts(
-        (res.results ?? []).map((m) => ({
+        media.map((m) => ({
           id: m.id,
           media_type: m.media_type === 'video' ? 'video' : 'image',
           media_url: m.media_url || m.url || '',

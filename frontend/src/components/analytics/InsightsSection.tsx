@@ -56,7 +56,9 @@ export function InsightsSection() {
     insight.analysis_data && typeof insight.analysis_data === 'object'
       ? (insight.analysis_data as InsightAnalysis)
       : null;
-  const source = analysis ? 'database' : 'demo';
+  // The insight always originates from the database; a missing generated
+  // analysis_data payload does not make it demo data.
+  const source = 'database';
 
   const groups = [
     { label: 'What stands out', items: asLines(analysis?.highlights) },

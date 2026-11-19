@@ -2,16 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { resolveMediaUrl } from '../api/client';
 import { getProjectThumbnail } from '../api/hecticApi';
-import type { Project, StudioInfo } from '../api/types';
+import type { Project, Service, StudioInfo } from '../api/types';
 
 export function StudioTrustSection({
   studio,
   projects,
+  services,
   totalProjects,
   loading,
 }: {
   studio?: StudioInfo | null;
   projects: Project[];
+  services: Service[];
   totalProjects: number | null;
   loading: boolean;
 }) {
@@ -87,6 +89,12 @@ export function StudioTrustSection({
     portraitSources[0]?.src ||
     null;
 
+  // Live services from the API. Only the first three fill the editorial cards;
+  // if fewer are published, the unused cards are dropped.
+  const cards = services
+    .filter((service) => service.is_active !== false)
+    .slice(0, 3);
+
   return (
     <section
       aria-label="What We Do — Production & Post-Production"
@@ -117,7 +125,8 @@ export function StudioTrustSection({
 
           {/* Three Editorial Cards */}
           <div className="mt-8 sm:mt-12 grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-5">
-            {/* Card 1: Editing & Post-production */}
+            {/* Card 1 */}
+            {cards[0] ? (
             <article className="group min-w-0 flex flex-col justify-between rounded-xl border border-[#f3f2ee]/12 bg-[#121214] p-5 sm:p-6 md:p-7 transition-colors duration-300 hover:border-[#f3f2ee]/25">
               <div>
                 <div className="flex items-center justify-between gap-1">
@@ -129,11 +138,13 @@ export function StudioTrustSection({
                   </span>
                 </div>
                 <h3 className="mt-3 sm:mt-4 font-display text-lg sm:text-xl font-normal leading-tight tracking-tight text-[#f3f2ee]">
-                  Editing &amp; Post-production
+                  {cards[0].title || cards[0].name || 'Service'}
                 </h3>
-                <p className="mt-2.5 text-[13px] sm:text-[13.5px] leading-relaxed text-[#f3f2ee]/65">
-                  The edit is where everything comes together. We work on pacing, transitions, colour, sound, and the smaller details that make a film feel complete.
-                </p>
+                {cards[0].description ? (
+                  <p className="mt-2.5 text-[13px] sm:text-[13.5px] leading-relaxed text-[#f3f2ee]/65">
+                    {cards[0].description}
+                  </p>
+                ) : null}
               </div>
 
               <div className="mt-6 pt-5 border-t border-[#f3f2ee]/10">
@@ -160,8 +171,10 @@ export function StudioTrustSection({
                 </div>
               </div>
             </article>
+            ) : null}
 
-            {/* Card 2: Video Production */}
+            {/* Card 2 */}
+            {cards[1] ? (
             <article className="group min-w-0 flex flex-col justify-between rounded-xl border border-[#f3f2ee]/12 bg-[#121214] p-5 sm:p-6 md:p-7 transition-colors duration-300 hover:border-[#f3f2ee]/25">
               <div>
                 <div className="flex items-center justify-between gap-1">
@@ -173,11 +186,13 @@ export function StudioTrustSection({
                   </span>
                 </div>
                 <h3 className="mt-3 sm:mt-4 font-display text-lg sm:text-xl font-normal leading-tight tracking-tight text-[#f3f2ee]">
-                  Video Production
+                  {cards[1].title || cards[1].name || 'Service'}
                 </h3>
-                <p className="mt-2.5 text-[13px] sm:text-[13.5px] leading-relaxed text-[#f3f2ee]/65">
-                  From planning a shoot to capturing the footage, we work on bringing visual ideas to life through camera work and production.
-                </p>
+                {cards[1].description ? (
+                  <p className="mt-2.5 text-[13px] sm:text-[13.5px] leading-relaxed text-[#f3f2ee]/65">
+                    {cards[1].description}
+                  </p>
+                ) : null}
               </div>
 
               <div className="mt-6 pt-5 border-t border-[#f3f2ee]/10 flex items-center justify-between">
@@ -197,8 +212,10 @@ export function StudioTrustSection({
                 </Link>
               </div>
             </article>
+            ) : null}
 
-            {/* Card 3: Creative Projects */}
+            {/* Card 3 */}
+            {cards[2] ? (
             <article className="group min-w-0 flex flex-col justify-between rounded-xl border border-[#f3f2ee]/12 bg-[#121214] p-5 sm:p-6 md:p-7 transition-colors duration-300 hover:border-[#f3f2ee]/25">
               <div>
                 <div className="flex items-center justify-between gap-1">
@@ -210,11 +227,13 @@ export function StudioTrustSection({
                   </span>
                 </div>
                 <h3 className="mt-3 sm:mt-4 font-display text-lg sm:text-xl font-normal leading-tight tracking-tight text-[#f3f2ee]">
-                  Creative Projects
+                  {cards[2].title || cards[2].name || 'Service'}
                 </h3>
-                <p className="mt-2.5 text-[13px] sm:text-[13.5px] leading-relaxed text-[#f3f2ee]/65">
-                  We collaborate on projects across automotive, commercial, fashion, events, product, and creative films. Different subjects, different approaches, always focused on the final result.
-                </p>
+                {cards[2].description ? (
+                  <p className="mt-2.5 text-[13px] sm:text-[13.5px] leading-relaxed text-[#f3f2ee]/65">
+                    {cards[2].description}
+                  </p>
+                ) : null}
               </div>
 
               <div className="mt-6 pt-5 border-t border-[#f3f2ee]/10 flex items-center justify-between">
@@ -229,6 +248,7 @@ export function StudioTrustSection({
                 </Link>
               </div>
             </article>
+            ) : null}
           </div>
         </div>
       </div>
