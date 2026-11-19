@@ -23,6 +23,7 @@ except ImportError:
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
+from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework import status
 
@@ -74,6 +75,37 @@ def _stream_error_frame(code: str, message: str, retryable: bool) -> str:
             "retryable": retryable,
         }
     ) + "\n"
+
+
+class NDJSONRenderer(BaseRenderer):
+    """
+    Renderer for newline-delimited JSON (``application/x-ndjson``).
+
+    DRF's content negotiation only advertises media types that at least one
+    configured renderer declares. Without a renderer for
+    ``application/x-ndjson`` a request that sends
+    ``Accept: application/x-ndjson`` is rejected with ``406 Not Acceptable``
+    before the view handler ever runs. Declaring this renderer lets the
+    negotiation succeed for the streaming endpoint.
+
+    ``StreamingHttpResponse`` bodies are not passed through ``render()`` -- DRF
+    only renders its own ``Response`` objects -- so this method is reached for
+    the streaming view's own plain ``Response`` errors and returns a single
+    valid NDJSON record for those.
+    """
+
+    media_type = "application/x-ndjson"
+    format = "ndjson"
+    charset = "utf-8"
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        if data is None:
+            return b""
+        if isinstance(data, bytes):
+            return data
+        if isinstance(data, str):
+            return data.encode(self.charset)
+        return (json.dumps(data) + "\n").encode(self.charset)
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +281,12 @@ class PortfolioChatStreamView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "portfolio_chat"
+
+    # ``application/x-ndjson`` is what the browser streaming client asks for in
+    # its Accept header. JSONRenderer stays available so a client that asks for
+    # ``application/json`` (or sends no Accept header at all) still gets a
+    # negotiable response instead of a 406.
+    renderer_classes = [NDJSONRenderer, JSONRenderer]
 
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)

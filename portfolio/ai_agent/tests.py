@@ -2,6 +2,7 @@
 # as possible without breaking existing behaviour or introducing another vector DB.
 from __future__ import annotations
 
+import json
 import threading
 import time
 from unittest.mock import Mock, patch
@@ -509,3 +510,54 @@ class PortfolioChatViewTests(TestCase):
         self.assertIn('"text": "Partial answer."', body)
         self.assertIn('"code": "AI_PROVIDER_UNAVAILABLE"', body)
         self.assertFalse(ChatMessage.objects.filter(role="assistant").exists())
+
+    @override_settings(AI_CHAT_CACHE_ENABLED=False)
+    def test_streaming_accepts_ndjson_accept_header(self):
+        """The endpoint must negotiate ``Accept: application/x-ndjson``.
+
+        DRF raises ``406 Not Acceptable`` when no configured renderer matches the
+        request's Accept header, and that happens before the view body runs. The
+        other streaming tests send no Accept header, so only this one exercises
+        the content-negotiation path. It pins the renderer on the streaming view
+        and asserts every emitted record is a complete, newline-terminated JSON
+        object.
+        """
+        request = APIRequestFactory().post(
+            "/api/v1/assistant/chat/stream/",
+            {"message": "A unique content negotiation test"},
+            format="json",
+            HTTP_ACCEPT="application/x-ndjson",
+        )
+        mock_client = Mock()
+        mock_client.models.generate_content_stream.return_value = iter(
+            [Mock(text="Negotiated answer.", name=None)]
+        )
+
+        with (
+            patch.object(
+                chat_views.PortfolioChatStreamView,
+                "throttle_classes",
+                [],
+            ),
+            patch(
+                "ai_agent.views.build_gemini_context",
+                return_value="portfolio context",
+            ),
+            patch(
+                "ai_agent.utils.get_gemini_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "ai_agent.views._select_gemini_chat_model",
+                return_value="primary-model",
+            ),
+        ):
+            response = chat_views.PortfolioChatStreamView.as_view()(request)
+            body = b"".join(response.streaming_content).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/x-ndjson", response["Content-Type"])
+        self.assertIn('"text": "Negotiated answer."', body)
+        self.assertIn('"type": "session"', body)
+        for record in body.splitlines():
+            json.loads(record)

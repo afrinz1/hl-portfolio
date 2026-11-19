@@ -394,9 +394,24 @@ export async function* streamNdjson<T extends object>(
         429
       );
     }
+    // Error responses are negotiated the same way as the stream: a client that
+    // asked for NDJSON gets a single newline-terminated record carrying the same
+    // object the JSON renderer would have returned.
     const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      const data = await response.json().catch(() => null);
+    if (
+      contentType.includes('application/json') ||
+      contentType.includes('application/x-ndjson')
+    ) {
+      const raw = await response.text().catch(() => '');
+      const firstLine = raw.split('\n', 1)[0].trim();
+      let data: unknown = null;
+      if (firstLine) {
+        try {
+          data = JSON.parse(firstLine);
+        } catch {
+          data = null;
+        }
+      }
       throw parseDrfErrors(data, response.status);
     }
     throw new ApiError(`API returned HTTP ${response.status}.`, response.status);
