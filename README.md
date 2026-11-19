@@ -1,34 +1,78 @@
-# Hectic Lab Portfolio: Backend
+# Hectic Lab Portfolio
 
-Django + Django REST Framework backend for the Hectic Lab portfolio site. It serves portfolio projects, studio information, services and insights, accepts client inquiries, provides an AI chat assistant, and exposes JWT-authenticated editor endpoints for content management.
+A portfolio site for Hectic Lab with a Django REST Framework API and a React/Vite single-page app. The API serves portfolio projects, studio information, services, insights and an analytics dashboard, accepts client inquiries, and exposes an AI assistant backed by Google Gemini. An authenticated editor dashboard lets the studio manage projects, categories, media and inquiries.
 
 ## Table of Contents
 
+- [Repository Layout](#repository-layout)
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
+- [Environment Variables](#environment-variables)
 - [Apps & Models](#apps--models)
 - [API Reference](#api-reference)
-- [Architecture](#architecture)
-- [Configuration](#configuration)
-- [Database](#database)
+- [Authentication](#authentication)
+- [AI Assistant](#ai-assistant)
+- [Analytics](#analytics)
+- [Email](#email)
+- [Frontend Routes](#frontend-routes)
 - [Testing](#testing)
+- [Deployment](#deployment)
+
+## Repository Layout
+
+```
+.
+├── portfolio/                 # Django project (backend)
+│   ├── portfolio/             # Settings, root urls, sitemap, pagination
+│   ├── project/               # Categories, Projects, ProjectMedia
+│   ├── studio/                # StudioSettings, Service, StudioInsight
+│   ├── inquiries/             # Inquiry + email delivery
+│   ├── ai_agent/              # Chat + natural-language project search
+│   ├── authentication/        # JWT login, CSRF, editor permissions
+│   ├── analytics/             # Portfolio overview + external providers
+│   ├── manage.py
+│   └── requirements.txt
+└── frontend/                  # React + Vite SPA
+    ├── src/
+    │   ├── api/               # client.ts, hecticApi.ts, types
+    │   ├── components/        # UI + analytics sections
+    │   ├── pages/             # Route pages
+    │   └── App.tsx            # Route table
+    ├── vite.config.ts
+    └── package.json
+```
 
 ## Tech Stack
 
-- Django and Django REST Framework
-- SimpleJWT (with token blacklist), cookie-based refresh token
+**Backend**
+
+- Django 6.1 and Django REST Framework 3.18
+- SimpleJWT (with token blacklist) — access token in memory, refresh token in an HttpOnly cookie
 - django-cors-headers
-- SQLite3 (main database)
-- Django cache backend (DB by default, Redis optional) for AI answer caching
-- Google Gemini (`google-genai`) for the AI assistant
+- WhiteNoise (`CompressedManifestStaticFilesStorage`) for static file serving in production
+- Google Gemini via `google-genai` for the assistant and project search
 - Google Analytics Data API (GA4) for live website analytics (optional)
-- python-decouple / python-dotenv for environment configuration
+- Resend HTTPS API for outbound email (Railway blocks outbound SMTP)
+- SQLite3 (default) or PostgreSQL via the `DB_LIVE` switch (see [Environment Variables](#environment-variables))
+- python-dotenv / python-decouple for environment configuration
+
+**Frontend**
+
+- React 19 + TypeScript, Vite 8, Tailwind CSS 4
+- React Router 7, Framer Motion, Recharts, lucide-react
 
 ## Getting Started
 
+### Backend
+
 ```bash
-# apply migrations
+cd portfolio
+pip install -r requirements.txt
+
 python manage.py migrate
+
+# DB-backed cache table used to cache repeated AI answers
+python manage.py createcachetable
 
 # load demo portfolio data (idempotent, safe to re-run)
 python manage.py seed_demo_portfolio
@@ -36,13 +80,98 @@ python manage.py seed_demo_portfolio
 # create an editor user (added to the "Editors" group)
 python manage.py seed_editor_user --username editor --email editor@hecticlab.com
 
-# run the dev server
 python manage.py runserver
 ```
 
+The API is then served at `http://127.0.0.1:8000/`. For local development set
+`DEBUG=True` in the environment (see [Environment Variables](#environment-variables)).
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev            # dev server on http://localhost:3000
+```
+
+Copy `.env.example` to `.env` if you need to point the SPA at a non-default API
+URL. The Vite dev proxy forwards `/api` to `VITE_API_PROXY_TARGET`
+(`http://127.0.0.1:8000` by default) when `VITE_API_BASE_URL` is left empty.
+
+## Environment Variables
+
+Create a `.env` at the repository root (loaded by the backend). Only the
+variable **names** are listed here — never commit real values.
+
+**Django**
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SECRET_KEY` | — | Required |
+| `DEBUG` | `False` | Defaults to production mode; set `True` locally |
+| `ALLOWED_HOSTS` | `*` | Comma-separated |
+| `CSRF_TRUSTED_ORIGINS` | localhost + Vercel origin | Comma-separated; must include the deployed SPA origin |
+| `CORS_ALLOWED_ORIGINS` | localhost + Vercel origin | Comma-separated; wildcards are incompatible with credentialed requests |
+| `SITE_URL` | `""` | Absolute public origin for `sitemap.xml`; falls back to request origin |
+| `JWT_SIGNING_KEY` | `SECRET_KEY` | Optional override |
+| `JWT_ACCESS_TOKEN_LIFETIME_MINUTES` | `15` | |
+| `JWT_REFRESH_TOKEN_LIFETIME_DAYS` | `7` | |
+| `JWT_AUTH_COOKIE` | `hectic_refresh_token` | HttpOnly refresh cookie name |
+| `JWT_AUTH_COOKIE_SAMESITE` | `Lax` (dev) / `None` (prod) | `None` required for cross-site Vercel → Railway |
+| `CSRF_COOKIE_SAMESITE` | `Lax` (dev) / `None` (prod) | Same rationale as above |
+| `SECURE_SSL_REDIRECT` | `not DEBUG` | |
+| `USE_X_FORWARDED_HOST` | `not DEBUG` | |
+
+**Database**
+
+| Variable | Notes |
+|---|---|
+| `DB_LIVE` | `True` switches to PostgreSQL; otherwise SQLite |
+| `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` | PostgreSQL connection (port defaults to `5432`, `sslmode=require`) |
+
+**AI**
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GEMINI_API_KEY` | `""` | Required for chat/search |
+| `GEMINI_CHAT_MODEL` | `""` | Blank → fastest registered model chosen at runtime |
+| `GEMINI_CHAT_FALLBACK_MODEL` | `""` | Optional fallback model |
+| `AI_MEDIA_IMAGE_MAX_BYTES` | `8388608` | Max image/poster bytes sent to Gemini |
+| `AI_CHAT_CACHE_ENABLED` | `True` | Cache repeated questions |
+| `AI_CHAT_CACHE_TTL_SECONDS` | `300` | Cache entry lifetime |
+| `CACHE_BACKEND` | `django.core.cache.backends.db.DatabaseCache` | Set a Redis backend to share cache across workers |
+| `CACHE_LOCATION` | `ai_chat_cache` | Cache table / Redis location |
+
+**Email**
+
+| Variable | Default | Notes |
+|---|---|---|
+| `EMAIL_BACKEND` | `inquiries.email_backend.ResendEmailBackend` | Override to switch back to SMTP |
+| `RESEND_API_KEY` | `""` | Required for the Resend backend |
+| `DEFAULT_FROM_EMAIL` | `onboarding@resend.dev` | Must be a Resend-verified sender |
+| `INQUIRY_NOTIFICATION_EMAIL` | `hecticlabs1@gmail.com` | Where notifications land; Reply-To on the client acknowledgement |
+| `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_TIMEOUT` | — | SMTP fallback settings |
+
+**Analytics**
+
+| Variable | Notes |
+|---|---|
+| `GA4_PROPERTY_ID` | GA4 property id for live website analytics |
+| `GA4_SERVICE_ACCOUNT_FILE` / `GA4_SERVICE_ACCOUNT_JSON` / `GOOGLE_APPLICATION_CREDENTIALS` | GA4 service-account credentials |
+| `INSTAGRAM_ACCESS_TOKEN` | Reserved for Instagram Insights (not served — see [Analytics](#analytics)) |
+
+**Frontend** (`frontend/.env`)
+
+| Variable | Notes |
+|---|---|
+| `VITE_API_BASE_URL` | API origin; the client normalises it and appends `/api/v1`. Empty → relative `/api/v1` via the dev proxy |
+| `VITE_API_PROXY_TARGET` | Dev-proxy target (default `http://127.0.0.1:8000`) |
+
+Only `VITE_`-prefixed variables reach the browser bundle — never put secrets there.
+
 ## Apps & Models
 
-The project has 6 Django apps: `project`, `studio`, `inquiries`, `ai_agent`, `authentication` and `analytics`.
+Seven Django apps: `project`, `studio`, `inquiries`, `ai_agent`, `authentication`, `analytics`, plus the `portfolio` project package.
 
 ### `BaseClass` (abstract)
 
@@ -56,432 +185,273 @@ Shared by most models.
 
 ### `project`
 
-**Category** (extends BaseClass)
+**Category** (extends `BaseClass`) — `name`, `slug` (unique), `description`, `display_order`, `is_active`.
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | CharField (max_length=250) | Category name |
-| `slug` | SlugField (unique) | URL-friendly identifier |
-| `description` | TextField (blank) | Category description |
-| `display_order` | PositiveIntegerField (default=0) | Sort order |
-| `is_active` | BooleanField (default=True) | Visibility flag |
+**Project** (extends `BaseClass`) — `title`, `slug` (unique), `category` (FK → Category, `PROTECT`, `related_name="projects"`), `client`, `description`, `cover_image` (URL), `year`, `status` (published flag, default `False`), `active_status` (default `True`), `display_order`. Ordered by `["display_order", "-created_at"]`.
 
-**Project** (extends BaseClass)
+**ProjectMedia** (extends `BaseClass`) — `project` (FK → Project, `CASCADE`, `related_name="media"`), `media_type` (`image` | `video`), `media_url` (URL), `public_id`, `poster_url` (URL), `caption`, `alt_text`, `display_order`. Ordered by `["display_order", "created_at"]`.
 
-| Field | Type | Description |
-|---|---|---|
-| `title` | CharField (max_length=200) | Project title |
-| `slug` | SlugField (unique) | URL-friendly identifier |
-| `category` | ForeignKey → Category (PROTECT, `related_name="projects"`) | Project category |
-| `client` | CharField (max_length=150, blank) | Client name |
-| `description` | TextField | Project description |
-| `cover_image` | URLField (blank) | Cover image URL |
-| `year` | PositiveIntegerField | Project year |
-| `status` | BooleanField (default=False) | Published status |
-| `active_status` | BooleanField (default=True) | Active visibility |
-| `display_order` | PositiveIntegerField (default=0) | Sort order |
-
-**ProjectMedia** (extends BaseClass)
-
-| Field | Type | Description |
-|---|---|---|
-| `project` | ForeignKey → Project (CASCADE, `related_name="media"`) | Parent project |
-| `media_type` | CharField (choices: `image`, `video`; max_length=10) | Media type |
-| `media_url` | URLField | Media file URL |
-| `public_id` | CharField (max_length=255, blank) | External storage ID |
-| `poster_url` | URLField (blank) | Video poster/image URL |
-| `caption` | CharField (max_length=255, blank) | Media caption |
-| `alt_text` | CharField (max_length=255, blank) | Accessibility alt text |
-| `display_order` | PositiveIntegerField (default=0) | Sort order |
+A project is **public** only when `status=True`, `active_status=True` and its `category.is_active=True`.
 
 ### `studio`
 
-**StudioSettings** (extends BaseClass)
+**StudioSettings** (extends `BaseClass`) — `name`, `tagline`, `description`, `about`, `logo_url`, `email`, `phone`, `location`, `vision`.
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | CharField (max_length=150) | Studio name |
-| `tagline` | CharField (max_length=255) | Studio tagline |
-| `description` | TextField (blank) | Studio description |
-| `about` | TextField (blank) | About text |
-| `logo_url` | URLField (blank) | Logo URL |
-| `email` | EmailField (blank) | Contact email |
-| `phone` | CharField (max_length=20, blank) | Contact phone |
-| `location` | CharField (max_length=150, blank) | Studio location |
-| `vision` | TextField (blank) | Studio vision statement |
+**Service** (extends `BaseClass`) — `title`, `slug` (unique), `description`, `image_url`, `display_order`, `is_active`.
 
-**Service** (extends BaseClass)
-
-| Field | Type | Description |
-|---|---|---|
-| `title` | CharField (max_length=150) | Service title |
-| `slug` | SlugField (unique) | URL-friendly identifier |
-| `description` | TextField (blank) | Service description |
-| `image_url` | URLField (blank) | Service image URL |
-| `display_order` | PositiveIntegerField (default=0) | Sort order |
-| `is_active` | BooleanField (default=True) | Visibility flag |
-
-**StudioInsight** (extends BaseClass)
-
-| Field | Type | Description |
-|---|---|---|
-| `title` | CharField (max_length=200) | Insight title |
-| `summary` | TextField | Insight summary |
-| `analysis_data` | JSONField (default=dict, blank) | JSON analysis payload |
-| `generated_at` | DateTimeField (auto_now_add=True) | Generation timestamp |
-| `is_active` | BooleanField (default=False) | Visibility flag |
+**StudioInsight** (extends `BaseClass`) — `title`, `summary`, `analysis_data` (JSON, default `{}`), `generated_at` (auto), `is_active` (default `False`). Ordered by `["-generated_at"]`.
 
 ### `inquiries`
 
-**Inquiry** (extends BaseClass)
-
-| Field | Type | Description |
-|---|---|---|
-| `name` | CharField (max_length=150) | Inquirer name |
-| `email` | EmailField | Contact email |
-| `company` | CharField (max_length=150, blank) | Company name |
-| `service` | ForeignKey → Service (SET_NULL, null, blank, `related_name="inquiries"`) | Requested service |
-| `budget_range` | CharField (max_length=100, blank) | Budget range |
-| `message` | TextField | Inquiry message |
-| `status` | CharField (choices: `new`, `contacted`, `in_progress`, `completed`; default `new`) | Inquiry status |
+**Inquiry** (extends `BaseClass`) — `name`, `email`, `company`, `service` (FK → Service, `SET_NULL`, `related_name="inquiries"`), `budget_range`, `message`, `status` (`new` | `contacted` | `in_progress` | `completed`, default `new`). Ordered by `["-created_at"]`.
 
 ### `ai_agent`
 
-These models do **not** extend `BaseClass`. There is no vector store or embedding model — the former `KnowledgeChunk` model was removed. The assistant builds its context directly from the live portfolio models and caches repeated answers in the Django cache backend.
+These models do **not** extend `BaseClass`. There is **no vector database and no embeddings** — the former `KnowledgeChunk` model and the entire chromadb/vector tree were removed. The assistant builds its context directly from the live portfolio models and caches repeated answers in the Django cache backend.
 
-**ChatSession**
+**ChatSession** — `id` (UUID PK), `visitor_token` (UUID), `is_active`, `created_at`, `updated_at`.
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | UUIDField (primary key, default=uuid.uuid4) | Session ID |
-| `visitor_token` | UUIDField (default=uuid.uuid4) | Anonymous visitor token |
-| `is_active` | BooleanField (default=True) | Session active flag |
-| `created_at` | DateTimeField (auto_now_add=True) | Creation timestamp |
-| `updated_at` | DateTimeField (auto_now=True) | Last update timestamp |
-
-**ChatMessage**
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | UUIDField (primary key, default=uuid.uuid4) | Message ID |
-| `session` | ForeignKey → ChatSession (CASCADE, `related_name="messages"`) | Parent session |
-| `role` | CharField (choices: `user`, `assistant`; max_length=10) | Message role |
-| `content` | TextField | Message content |
-| `question` | TextField (blank) | Cached user question for deduplication |
-| `sources` | JSONField (default=list, blank) | Source references |
-| `created_at` | DateTimeField (auto_now_add=True) | Creation timestamp |
+**ChatMessage** — `id` (UUID PK), `session` (FK → ChatSession, `CASCADE`, `related_name="messages"`), `role` (`user` | `assistant`), `content`, `question` (cached question for dedup), `sources` (JSON list), `created_at`. Ordered by `["created_at"]`.
 
 ### `authentication`
 
-No custom models. Uses Django's default `User` model with group-based permissions.
+No custom models — Django's default `User` plus a `Editors` group. `user_is_editor()` treats members of that group and superusers as editors.
 
 ### `analytics`
 
-No models. A read-only app that aggregates portfolio statistics for the `/trust`
-dashboard and holds the provider layer for external analytics sources. See
-[Statistics](#statistics).
+No models. A read-only app that aggregates portfolio statistics and holds the provider layer for external analytics sources.
 
 ## API Reference
 
 ### URL structure
 
+Defined in `portfolio/urls.py`:
+
 | Root prefix | Includes |
 |---|---|
 | `admin/` | Django admin |
-| `sitemap.xml` | `sitemap_xml` — data-driven sitemap |
+| `sitemap.xml` | Data-driven sitemap (`portfolio/sitemap.py`) |
 | `api/v1/` | `project.v1_urls`, `studio.v1_urls`, `inquiries.v1_urls` |
 | `api/` | `project.urls`, `studio.urls`, `inquiries.urls` (legacy, non-paginated) |
 | `api/v1/assistant/` | `ai_agent.urls` |
 | `api/v1/auth/` | `authentication.urls` |
 | `api/v1/analytics/` | `analytics.urls` |
 
+The `v1` prefix is the current, supported surface. The unprefixed `api/` routes are the legacy surface kept for backwards compatibility and return plain JSON arrays; `v1` list endpoints are paginated.
+
 ### Projects
 
-| Endpoint | View | Notes |
-|---|---|---|
-| `GET /api/categories/` | `CategoryListView` | Non-paginated |
-| `GET /api/projects/` | `ProjectListView` | Non-paginated, public only |
-| `GET /api/projects/<slug>/` | `ProjectDetailView` | Public only |
-| `GET /api/projects/<slug>/media/` | `ProjectMediaListView` | Public only |
-| `GET /api/v1/categories/` | `V1CategoryListView` | Paginated |
-| `GET /api/v1/projects/` | `V1ProjectListView` | Paginated, public only |
-| `GET /api/v1/projects/<slug>/` | `ProjectDetailView` | |
-| `GET /api/v1/projects/<slug>/media/` | `V1ProjectMediaListView` | Paginated |
-| `* /api/v1/media/` | `V1ProjectMediaViewSet` | CRUD, editor only |
-| `* /api/v1/editor/projects/` | `EditorProjectViewSet` | CRUD, editor only |
-| `* /api/v1/editor/categories/` | `EditorCategoryViewSet` | CRUD, editor only |
+| Endpoint | Notes |
+|---|---|
+| `GET /api/v1/categories/` | Paginated, active only |
+| `GET /api/v1/projects/` | Paginated, public only |
+| `GET /api/v1/projects/<slug>/` | Public detail |
+| `GET /api/v1/projects/<slug>/media/` | Paginated media for a public project |
+| `* /api/v1/media/` | CRUD (safe methods public, writes editor-only); supports `?project=<id>` |
+| `* /api/v1/editor/projects/` | Editor-only CRUD (lookup by slug or numeric id) |
+| `* /api/v1/editor/categories/` | Editor-only CRUD |
+| `GET /api/categories/`, `GET /api/projects/`, `GET /api/projects/<slug>/`, `GET /api/projects/<slug>/media/` | Legacy non-paginated equivalents |
 
 ### Studio
 
-| Endpoint | View | Notes |
-|---|---|---|
-| `GET /api/studio/` | `StudioSettingsView` | List |
-| `GET /api/services/` | `ServiceListView` | Active only |
-| `GET /api/insights/` | `StudioInsightListView` | Active only |
-| `GET /api/v1/studio/` | `V1StudioSettingsView` | Paginated |
-| `GET /api/v1/services/` | `V1ServiceListView` | Paginated, active only |
-| `GET /api/v1/insights/` | `V1StudioInsightListView` | Paginated, active only |
+| Endpoint | Notes |
+|---|---|
+| `GET /api/v1/studio/` | Studio settings |
+| `GET /api/v1/services/` | Active only |
+| `GET /api/v1/insights/` | Active only |
+| `GET /api/studio/`, `GET /api/services/`, `GET /api/insights/` | Legacy non-paginated equivalents |
 
 ### Inquiries
 
-| Endpoint | View | Notes |
-|---|---|---|
-| `POST /api/inquiries/` | `InquiryCreateView` | Public (AllowAny) |
-| `POST /api/v1/inquiries/` | `InquiryCreateView` | Same as legacy |
-| `* /api/v1/editor/inquiries/` | `EditorInquiryViewSet` | CRUD, editor only |
-
-### AI Assistant
-
-| Endpoint | View | Notes |
-|---|---|---|
-| `POST /api/v1/assistant/chat/` | `PortfolioChatView` | Non-streaming chat |
-| `POST /api/v1/assistant/chat/stream/` | `PortfolioChatStreamView` | Streaming chat |
-
-Chat is throttled at `10/minute` (`portfolio_chat` scope).
-
-### Authentication
-
-| Endpoint | View | Notes |
-|---|---|---|
-| `GET /api/v1/auth/csrf/` | `CsrfTokenView` | Issues CSRF cookie |
-| `POST /api/v1/auth/login/` | `LoginView` | JWT login, editor only |
-| `POST /api/v1/auth/token/refresh/` | `TokenRefreshView` | Uses HttpOnly cookie |
-| `POST /api/v1/auth/logout/` | `LogoutView` | Blacklists token |
-| `GET /api/v1/auth/me/` | `MeView` | Returns editor profile |
+| Endpoint | Notes |
+|---|---|
+| `POST /api/v1/inquiries/` | Public (`AllowAny`) |
+| `POST /api/inquiries/` | Legacy, same behaviour |
+| `* /api/v1/editor/inquiries/` | Editor-only CRUD |
 
 ### Analytics
 
-| Endpoint | View | Notes |
-|---|---|---|
-| `GET /api/v1/analytics/overview/` | `PortfolioOverviewView` | Public (`AllowAny`); aggregated live from the DB |
+| Endpoint | Notes |
+|---|---|
+| `GET /api/v1/analytics/overview/` | Public (`AllowAny`); aggregated live from the DB |
 
-Website (GA4) and Instagram analytics are not routed yet — the provider layer is implemented in `analytics/providers.py` (see [Statistics](#statistics)).
-
-### Response shapes
-
-- **Legacy `/api/`** endpoints return JSON arrays directly.
-- **V1 `/api/v1/`** list endpoints return paginated objects:
-
-  ```json
-  { "count": 0, "next": null, "previous": null, "results": [] }
-  ```
-
-- **Detail** views return a single object.
-- **Chat** views return structured objects with timing and sources metadata.
+Website (GA4) and Instagram figures are not routed as endpoints — the provider layer lives in `analytics/providers.py` (see [Analytics](#analytics)).
 
 ### Pagination
 
-`PortfolioPagination` (`portfolio/pagination.py`):
+`PortfolioPagination` (`portfolio/pagination.py`), applied per view on the `v1` list endpoints:
 
 - `page_size = 20`
 - `page_size_query_param = "page_size"`
 - `max_page_size = 100`
 
-There is no global default pagination; it is applied per view on the v1 endpoints.
+There is no global default pagination. `v1` list responses have the shape
+`{ "count": N, "next": null, "previous": null, "results": [...] }` — **`count`
+is the total matching rows, not the size of `results`**. Clients that need the
+full set must walk `next` (the editor dashboard does this).
 
-## Architecture
+### Renderers
 
-### Serializers
+`DEFAULT_RENDERER_CLASSES` is JSON-only when `DEBUG=False`. The browsable HTML
+API (and its DRF static assets) is enabled only in development — this avoids a
+production 500 from WhiteNoise's manifest missing DRF's CSS, and removes a
+public information-disclosure surface.
 
-| Serializer | Details |
+## Authentication
+
+JWT + session authentication. The **access token** lives in memory in the SPA
+only (15 minutes); the **refresh token** is stored in an HttpOnly cookie
+(`hectic_refresh_token`, 7 days) with rotation and blacklisting enabled.
+
+| Endpoint | Notes |
 |---|---|
-| `CategorySerializer` | `fields = "__all__"` |
-| `ProjectSerializer` | Nested `category` (read-only) and `media` (read-only, many) |
-| `ProjectWriteSerializer` | Flat serializer for editor operations; auto-generates slugs |
-| `ProjectMediaSerializer` | Excludes `project` for public views |
-| `ProjectMediaWriteSerializer` | `fields = "__all__"` for editor |
-| `StudioSettingsSerializer`, `ServiceSerializer`, `StudioInsightSerializer` | `fields = "__all__"` |
-| `InquirySerializer` | Write-only public submission serializer |
-| `EditorInquirySerializer` | Full serializer with read-only `service_title` |
-| `LoginSerializer` | Username and password fields |
+| `GET /api/v1/auth/csrf/` | Issues the readable `csrftoken` cookie (and returns it in the body) |
+| `POST /api/v1/auth/login/` | Username/password; editor-only; sets the refresh cookie, returns access token + CSRF token |
+| `POST /api/v1/auth/token/refresh/` | Reads the refresh cookie, returns a new access token |
+| `POST /api/v1/auth/logout/` | Blacklists the refresh token and clears the cookie |
+| `GET /api/v1/auth/me/` | Returns the editor profile |
 
-### View patterns
+Flow: the SPA fetches the CSRF cookie, echoes it back in the `X-CSRFToken`
+header on unsafe methods, sends `credentials: 'include'` on every request, and
+silently retries once via `/auth/token/refresh/` on a `401`. Cookies are
+`SameSite=Lax` in development (same site, different port) and `SameSite=None`
++ `Secure` in production, because the SPA (Vercel) and API (Railway) live on
+different sites.
 
-| Use case | Pattern |
-|---|---|
-| Public read-only | `generics.ListAPIView`, `generics.RetrieveAPIView` (inherit from base `views.py`) |
-| V1 paginated | Extend public views with `pagination_class = PortfolioPagination` |
-| Editor management | `viewsets.ModelViewSet`, writes restricted to editors |
-| Public creation | `generics.CreateAPIView` with `AllowAny` (inquiries) |
-| Auth / chat | `APIView` for custom logic |
+## AI Assistant
 
-### Permissions
+Two Gemini-backed, publicly accessible endpoints. Both are `AllowAny` and
+throttled with `ScopedRateThrottle`.
 
-| Class | Behaviour |
-|---|---|
-| `IsEditor` | Only users in the "Editors" group, or superusers |
-| `EditorMediaPermissions` | Safe methods for all; writes only for editors |
-| `DjangoModelPermissionsOrAnonReadOnly` | Default DRF fallback |
-| `AllowAny` | Public endpoints (inquiries, auth, chat) |
+| Endpoint | Throttle | Notes |
+|---|---|---|
+| `POST /api/v1/assistant/chat/` | `10/minute` (`portfolio_chat`) | Non-streaming chat |
+| `GET /api/v1/assistant/search/?query=<text>` | `30/minute` (`portfolio_search`) | Natural-language project search |
 
-### Statistics
+The **chat** endpoint is deliberately non-streaming: it returns a single JSON
+object `{ session_id, visitor_token, answer, sources, timing }`. A session is
+created on first call; subsequent calls pass `session_id` and `visitor_token`
+so history (up to the last 10 turns) is reused. `sources` are project cards for
+the retrieved context. When `GEMINI_CHAT_MODEL` is blank the fastest registered
+model is selected at runtime (Flash → Flash-Lite → Pro ladder).
 
-Portfolio statistics are served by the `analytics` app at
-`GET /api/v1/analytics/overview/` (`PortfolioOverviewView`, public). It
-aggregates the live `project` tables only and returns `source: "database"`:
+The **search** endpoint ranks published projects against a free-text query and
+returns `{ query, count, results }` of project cards.
 
-- totals — projects, categories, media assets, years covered, year span,
-  average media per project
-- `category_distribution` — active categories with their public project counts
-- `projects_by_month` — a **zero-filled trailing 12-month series** bucketed by
-  `Project.created_at` (projects have no release month)
-- `media_breakdown` — image vs. video counts
-- `selected_work` — up to 6 public projects ordered by `display_order`
+Context is built directly from the live portfolio models — no retrieval
+index. Repeated questions are served from the Django cache backend
+(`AI_CHAT_CACHE_ENABLED`, `AI_CHAT_CACHE_TTL_SECONDS`). Provider failures are
+mapped to `503` (`AI_PROVIDER_UNAVAILABLE`, retryable, `Retry-After: 5`) or
+`502` (`AI_PROVIDER_ERROR`).
 
-`analytics/providers.py` holds the **live provider layer** for the two external
-sources the dashboard also displays:
+## Analytics
 
-- `website_analytics()` reads the **GA4 Data API** (`GA4_PROPERTY_ID` plus
-  service-account credentials). It mirrors the frontend `WebsiteAnalytics`
-  interface: period totals, a zero-filled trailing 12-month series, and the most
-  viewed project pages.
-- `instagram_analytics()` is a placeholder. The Instagram Graph API exposes only
-  ~30 days of daily history, fewer than the dashboard's 12-month window, so it
-  raises `AnalyticsUnavailable` until metrics are snapshotted over time.
+`GET /api/v1/analytics/overview/` (`PortfolioOverviewView`, public) aggregates
+the live `project` tables only and returns `source: "database"`:
+
+- **totals** — projects, categories, media assets, years covered, year span, average media per project
+- **category_distribution** — active categories with their public project counts
+- **projects_by_month** — a zero-filled trailing 12-month series bucketed by `Project.created_at` (projects have no release month)
+- **media_breakdown** — image vs. video counts
+- **selected_work** — up to 6 public projects ordered by `display_order`
+
+`analytics/providers.py` holds the provider layer for the two external sources
+the `/trust` dashboard also displays:
+
+- **`website_analytics()`** reads the **GA4 Data API** (`GA4_PROPERTY_ID` + service-account credentials). It mirrors the frontend `WebsiteAnalytics` interface: period totals, a zero-filled trailing 12-month series, and the most viewed project pages.
+- **`instagram_analytics()`** is a placeholder. The Instagram Graph API exposes only ~30 days of daily history, fewer than the dashboard's 12-month window, so it raises `AnalyticsUnavailable`.
 
 When a provider is unconfigured or unreachable it raises `AnalyticsUnavailable`
-rather than inventing figures, and the dashboard falls back to clearly labelled
-demo data in the frontend (`src/api/demoAnalytics.ts`).
+rather than inventing figures, and the `/trust` dashboard falls back to clearly
+labelled demo values in `frontend/src/api/demoAnalytics.ts`. Its interfaces
+mirror the GA4 and Instagram Graph API shapes, so a real source can replace them
+without UI changes.
 
-## Configuration
+**Live vs. demo split:** all portfolio figures on the site are fetched live from
+the API with **no demo fallback**. Only the Website (GA4) and Instagram figures
+on `/trust` use labelled demo data today.
 
-Defined in `portfolio/settings.py`.
+## Email
 
-**Installed apps**
+Inquiries are persisted first, then two best-effort notifications are sent
+(`inquiries/utils.py`): a **client acknowledgement** to the submitter and an
+**admin notification** to the studio inbox. A mail failure is logged but never
+fails the submission. When the active backend is not configured, sending is
+skipped rather than attempted.
 
-- Django core: admin, auth, contenttypes, sessions, messages, staticfiles
-- Third-party: `corsheaders`, `rest_framework`, `rest_framework_simplejwt`, `rest_framework_simplejwt.token_blacklist`
-- Local: `project`, `studio`, `inquiries`, `authentication.apps.AuthenticationConfig`, `ai_agent`, `analytics`
+Because Railway blocks outbound SMTP (it drops the packets, so an SMTP send
+hangs instead of failing), mail goes out over Resend's HTTPS API
+(`inquiries/email_backend.py`, port 443). The SMTP settings are retained so the
+transport can be switched back with env vars alone once a plan allows SMTP.
 
-**REST framework**
+## Frontend Routes
 
-```python
-REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
-    ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.DjangoModelPermissionsOrAnonReadOnly",
-    ],
-    "DEFAULT_THROTTLE_RATES": {
-        "portfolio_chat": "10/minute",
-    },
-}
-```
+Defined in `frontend/src/App.tsx`:
 
-**Authentication**
-
-- JWT + session authentication
-- Refresh token stored in an HttpOnly cookie (`hectic_refresh_token`)
-- Access token lifetime 15 minutes; refresh token 7 days
-- Token rotation and blacklisting enabled
-- `CSRF_COOKIE_HTTPONLY = False` (readable by the SPA)
-- `CSRF_COOKIE_SAMESITE = "Lax"`
-
-**CORS / CSRF**
-
-```python
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://192.168.1.73:3000",
-]
-CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = same as CORS origins
-```
-
-**AI assistant**
-
-- `GEMINI_API_KEY` — required for the chat endpoints.
-- `GEMINI_CHAT_MODEL` / `GEMINI_CHAT_FALLBACK_MODEL` — optional model overrides.
-  When `GEMINI_CHAT_MODEL` is blank the fastest registered model is selected at
-  runtime (Flash → Flash-Lite → Flash → Pro).
-- `AI_CHAT_CACHE_ENABLED` (default `True`) / `AI_CHAT_CACHE_TTL_SECONDS`
-  (default `300`) — repeated-question answer caching.
-
-**Cache**
-
-```python
-CACHES = {
-    "default": {
-        "BACKEND": config("CACHE_BACKEND", default="django.core.cache.backends.db.DatabaseCache"),
-        "LOCATION": config("CACHE_LOCATION", default="ai_chat_cache"),
-    }
-}
-```
-
-Set `CACHE_BACKEND`/`CACHE_LOCATION` to a Redis backend to share the cache
-across workers; otherwise the database cache table (`ai_chat_cache`) is used.
-
-**Analytics**
-
-- `GA4_PROPERTY_ID` — GA4 property id for live website analytics.
-- `GA4_SERVICE_ACCOUNT_FILE` (or `GA4_SERVICE_ACCOUNT_JSON`, or
-  `GOOGLE_APPLICATION_CREDENTIALS`) — GA4 service-account credentials.
-- `INSTAGRAM_ACCESS_TOKEN` — reserved for Instagram Insights (not yet served).
-- `SITE_URL` — absolute public site origin used to build `sitemap.xml` URLs;
-  falls back to the request origin when blank.
-
-**SEO**
-
-- `GET /sitemap.xml` is generated from the static routes plus every published
-  project and active category (`portfolio/sitemap.py`).
-
-## Database
-
-- **Engine:** SQLite3 (`db.sqlite3`)
-- **AI cache:** Django cache backend — DB table `ai_chat_cache` by default, or Redis via `CACHE_BACKEND`/`CACHE_LOCATION`
-- The `analytics` app has no models, so it has no migrations.
-
-**Migrations**
-
-| App | Migrations |
+| Route | Page |
 |---|---|
-| `project` | 6 (initial through media fields) |
-| `studio` | 3 |
-| `inquiries` | 3 |
-| `ai_agent` | 2 |
-| `authentication` | Uses Django auth migrations |
+| `/` | Home |
+| `/work` | Work index |
+| `/categories`, `/categories/:slug` | Categories and category projects |
+| `/projects/:slug` | Project detail |
+| `/studio` | Studio (services anchor at `/studio#services`) |
+| `/services` | Redirects to `/studio#services` |
+| `/inquiries` | Inquiry form |
+| `/privacy` | Privacy |
+| `/trust` | Studio Analytics Dashboard |
+| `/login` | Editor login |
+| `/editor/login` | Redirects to `/login` |
+| `/editor`, `/editor/*` | Editor dashboard (protected) |
+| `*` | Not found |
 
-**Seed commands**
-
-- `project/management/commands/seed_demo_portfolio.py`: creates 4 categories (1 inactive) and 10 projects with visibility variations (7 published and active, 1 unpublished, 1 archived, 1 in a hidden category), each with YouTube demo media. Idempotent.
-- `authentication/management/commands/seed_editor_user.py`: creates a user in the "Editors" group.
+SEO titles are set from `ROUTE_META`; the AI chatbot widget renders globally.
+`GET /sitemap.xml` is generated on the backend from the static routes plus every
+published project and active category.
 
 ## Testing
 
-Tests live in `project/tests.py`, `studio/tests.py`, `inquiries/tests.py`, `ai_agent/tests.py`, `authentication/tests.py` and `analytics/tests.py`.
+Backend tests live alongside each app (`project/tests.py`, `studio/tests.py`,
+`inquiries/tests.py`, `ai_agent/tests.py`, `authentication/tests.py`,
+`analytics/tests.py`).
 
 ```bash
+cd portfolio
 python manage.py test
 ```
 
-**Project**
+Coverage includes: legacy list shape + hidden-project filtering, `v1`
+pagination and `page_size` capping, public-only media routes, `BaseClass`
+timestamp semantics, the demo seed command, active-service filtering, inquiry
+creation + email dispatch, and analytics overview contract/shape/empty cases.
 
-- `test_legacy_project_list_keeps_list_shape_and_hides_unpublished`
-- `test_v1_project_list_is_paginated`
-- `test_project_media_route_only_returns_public_project_media`
-- `test_v1_page_size_is_capped`
-- `BaseClassTimestampTests`: `created_at` is immutable, `updated_at` changes
-- `DemoPortfolioCommandTests`: seed command creates correct counts and visibility
+Frontend checks:
 
-**Services**
+```bash
+cd frontend
+npm run lint     # tsc --noEmit
+npm run build    # production bundle in dist/
+npm run clean    # remove dist/
+```
 
-- `test_legacy_service_list_only_returns_active_services`
-- `test_v1_service_list_is_paginated_and_only_returns_active_services`
+## Deployment
 
-**Inquiries**
+**Backend — Railway**
 
-- `test_submission_creates_inquiry_and_sends_both_emails`
-- `test_invalid_submission_does_not_create_inquiry_or_send_email`
+1. Set the environment variables above (`DEBUG=False`, `SECRET_KEY`,
+   `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `CORS_ALLOWED_ORIGINS`, `SITE_URL`,
+   `DB_LIVE` + `DB_*`, `GEMINI_API_KEY`, `RESEND_API_KEY`, `SECRET_KEY`-derived
+   JWT settings, etc.).
+2. Run migrations and collect static files on release:
+   `python manage.py migrate --noinput && python manage.py collectstatic --noinput`.
+3. Served by gunicorn; WhiteNoise serves the collected static files
+   (`STATIC_ROOT = staticfiles/`).
 
-**Analytics**
+**Frontend — Vercel**
 
-- `test_overview_counts_only_public_portfolio_data`
-- `test_overview_returns_chartable_shapes`
-- `test_overview_is_publicly_readable`
-- `test_overview_handles_an_empty_portfolio`
-- `OverviewContractTests.test_overview_payload_has_expected_top_level_keys`
-#   h l - p o r t f o l i o  
- 
+Set `VITE_API_BASE_URL` to the Railway origin (Vite bakes env vars in at build
+time, so redeploy after changing it), then build with `npm run build`.
+
+**Cross-site notes:** with the SPA and API on different origins, the API must
+list the SPA origin in both `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS`,
+and the CSRF/refresh cookies must be `SameSite=None; Secure` (the
+`DEBUG=False` default).
