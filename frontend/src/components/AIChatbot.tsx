@@ -6,7 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { ArrowUp, MessageCircle, RotateCcw, X } from 'lucide-react';
-import { ApiError, buildApiUrl, streamNdjson } from '../api/client';
+import { ApiError, apiRequest, buildApiUrl } from '../api/client';
 import { HecticLogoMark } from './Navbar';
 
 interface ChatMessage {
@@ -20,19 +20,11 @@ interface ChatSession {
   visitor_token: string;
 }
 
-/**
- * One frame of the assistant's newline-delimited JSON stream.
- * @see PortfolioChatStreamView in portfolio/ai_agent/views.py
- */
-interface ChatStreamEvent {
-  type: 'session' | 'text' | 'metadata' | 'done' | 'error';
-  text?: string;
-  name?: string;
-  session_id?: string;
-  visitor_token?: string;
-  error?: string;
-  code?: string;
-  retryable?: boolean;
+/** The reply contract of POST /api/v1/assistant/chat/. */
+interface ChatResponse {
+  session_id: string;
+  visitor_token: string;
+  answer: string;
 }
 
 interface LauncherDrag {
@@ -64,7 +56,6 @@ export function AIChatbot() {
   const toggleRef = useRef<HTMLButtonElement | null>(null);
   const launcherDragRef = useRef<LauncherDrag | null>(null);
   const suppressToggleClickRef = useRef(false);
-  const streamAbortRef = useRef<AbortController | null>(null);
   const [launcherPosition, setLauncherPosition] = useState<{
     x: number;
     y: number;
@@ -98,9 +89,6 @@ export function AIChatbot() {
     window.addEventListener('resize', keepLauncherInView);
     return () => window.removeEventListener('resize', keepLauncherInView);
   }, []);
-
-  // Cancel any in-flight stream when the widget unmounts.
-  useEffect(() => () => streamAbortRef.current?.abort(), []);
 
   const handleLauncherPointerDown = (
     event: ReactPointerEvent<HTMLButtonElement>
@@ -171,8 +159,6 @@ export function AIChatbot() {
 
   const startNewChat = () => {
     if (isSending) return;
-    streamAbortRef.current?.abort();
-    streamAbortRef.current = null;
     setMessages([]);
     setSession(null);
     setError(null);
@@ -188,8 +174,9 @@ export function AIChatbot() {
       role: 'user',
       content: text,
     };
-    // The assistant bubble is added up front and filled in as the stream
-    // arrives, so the answer visibly types itself out.
+    // The assistant bubble is added up front and filled in once the reply
+    // arrives, so the typing indicator has a bubble to attach to while the
+    // request is in flight.
     const assistantId = ++messageId.current;
     setMessages((current) => [
       ...current,
@@ -200,12 +187,6 @@ export function AIChatbot() {
     setError(null);
     setIsSending(true);
 
-    const controller = new AbortController();
-    streamAbortRef.current?.abort();
-    streamAbortRef.current = controller;
-
-    let answer = '';
-
     const replaceAssistant = (content: string) => {
       setMessages((current) =>
         current.map((message) =>
@@ -215,39 +196,30 @@ export function AIChatbot() {
     };
 
     try {
-      for await (const event of streamNdjson<ChatStreamEvent>(
-        buildApiUrl('/assistant/chat/stream/'),
+      const response = await apiRequest<ChatResponse>(
+        buildApiUrl('/assistant/chat/'),
         {
-          message: text,
-          ...(session ?? {}),
-        },
-        { signal: controller.signal }
-      )) {
-        if (event.type === 'session') {
-          if (event.session_id && event.visitor_token) {
-            setSession({
-              session_id: event.session_id,
-              visitor_token: event.visitor_token,
-            });
-          }
-        } else if (event.type === 'text' && event.text) {
-          answer += event.text;
-          replaceAssistant(answer);
-        } else if (event.type === 'error') {
-          throw new ApiError(
-            event.error || 'The assistant couldn’t reply just now. Please try again.',
-            0
-          );
+          method: 'POST',
+          body: JSON.stringify({
+            message: text,
+            ...(session ?? {}),
+          }),
         }
+      );
+
+      if (response.session_id && response.visitor_token) {
+        setSession({
+          session_id: response.session_id,
+          visitor_token: response.visitor_token,
+        });
       }
 
+      const answer = response.answer ?? '';
       if (!answer.trim()) {
         throw new Error('The assistant returned an empty response. Please try again.');
       }
+      replaceAssistant(answer);
     } catch (requestError) {
-      // A stream we cancelled on purpose is not a failure worth reporting.
-      if (controller.signal.aborted) return;
-
       const message =
         requestError instanceof ApiError && requestError.status === 429
           ? 'You’ve sent several messages quickly. Please wait a moment and try again.'
@@ -257,9 +229,6 @@ export function AIChatbot() {
       setError(message);
       replaceAssistant(message);
     } finally {
-      if (streamAbortRef.current === controller) {
-        streamAbortRef.current = null;
-      }
       setIsSending(false);
       inputRef.current?.focus();
     }
@@ -270,8 +239,8 @@ export function AIChatbot() {
     void sendMessage(draft);
   };
 
-  // The assistant bubble is created empty and filled as frames arrive, so the
-  // typing indicator stands in for it until the first text frame lands.
+  // The assistant bubble is created empty and filled when the reply arrives,
+  // so the typing indicator stands in for it until then.
   const lastMessage = messages[messages.length - 1];
   const showThinking =
     isSending && lastMessage?.role === 'assistant' && !lastMessage.content;
