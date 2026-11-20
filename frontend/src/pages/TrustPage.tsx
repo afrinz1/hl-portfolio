@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { DEMO_ANALYTICS, DEMO_ANALYTICS_SOURCE } from '../api/demoAnalytics';
 import { hecticApi } from '../api/hecticApi';
 import type { PortfolioOverview, StudioInfo } from '../api/types';
-import { InstagramAnalyticsSection } from '../components/analytics/InstagramAnalyticsSection';
 import { InsightsSection } from '../components/analytics/InsightsSection';
 import { OverviewSection } from '../components/analytics/OverviewSection';
 import { PortfolioAnalyticsSection } from '../components/analytics/PortfolioAnalyticsSection';
-import { WebsiteAnalyticsSection } from '../components/analytics/WebsiteAnalyticsSection';
+import { ReleasesSection } from '../components/analytics/ReleasesSection';
 import { CyanFooter } from '../components/CyanFooter';
 import { Navbar } from '../components/Navbar';
 import { PageShell } from '../components/PageShell';
@@ -16,8 +14,7 @@ import { ErrorState } from '../components/StatusStates';
 const SECTION_LINKS = [
   { label: 'overview', href: '#overview' },
   { label: 'portfolio', href: '#portfolio' },
-  { label: 'instagram', href: '#instagram' },
-  { label: 'website', href: '#website' },
+  { label: 'releases', href: '#releases' },
   { label: 'insights', href: '#insights' },
 ];
 
@@ -112,8 +109,6 @@ export function TrustPage() {
     };
   }, []);
 
-  const { website, instagram } = DEMO_ANALYTICS;
-
   return (
     <div className="min-h-screen bg-[#F3F0E9] text-[#111110]">
       <Navbar />
@@ -135,8 +130,8 @@ export function TrustPage() {
 
             <div className="max-w-sm">
               <p className="text-[15px] leading-[1.6] text-[#111110]/70">
-                Every figure the studio can stand behind — the archive, the
-                audience, and where the work is being watched.
+                Every figure the studio can stand behind — the archive, its
+                shape, and when the work was made.
               </p>
               <Link
                 to="/work"
@@ -148,30 +143,14 @@ export function TrustPage() {
           </div>
 
           {/* Provenance strip */}
-          <dl className="mt-12 grid grid-cols-1 gap-px bg-[#111110]/14 sm:grid-cols-3">
+          <dl className="mt-12 grid grid-cols-1 gap-px bg-[#111110]/14">
             <div className="bg-[#F3F0E9] px-4 py-5 sm:px-5">
               <dt className="font-mono-hl text-[10px] uppercase tracking-wider text-[#14bfb9]">
                 ● Live database
               </dt>
               <dd className="mt-2 text-[13px] leading-relaxed text-[#111110]/70">
-                Projects, categories, media and release years — counted from the
-                portfolio records.
-              </dd>
-            </div>
-            <div className="bg-[#F3F0E9] px-4 py-5 sm:px-5">
-              <dt className="font-mono-hl text-[10px] uppercase tracking-wider text-[#111110]/65">
-                ○ Website · demo
-              </dt>
-              <dd className="mt-2 text-[13px] leading-relaxed text-[#111110]/70">
-                {DEMO_ANALYTICS_SOURCE.window}. Placeholder traffic figures.
-              </dd>
-            </div>
-            <div className="bg-[#F3F0E9] px-4 py-5 sm:px-5">
-              <dt className="font-mono-hl text-[10px] uppercase tracking-wider text-[#111110]/65">
-                ○ Instagram · demo
-              </dt>
-              <dd className="mt-2 text-[13px] leading-relaxed text-[#111110]/70">
-                {DEMO_ANALYTICS_SOURCE.window}. Placeholder insights figures.
+                Projects, categories, media and release years — every figure on
+                this page is counted from the portfolio records.
               </dd>
             </div>
           </dl>
@@ -209,14 +188,9 @@ export function TrustPage() {
             />
           ) : (
             <div className="space-y-24 md:space-y-32">
-              <OverviewSection
-                overview={overview}
-                website={website}
-                instagram={instagram}
-              />
+              <OverviewSection overview={overview} />
               <PortfolioAnalyticsSection overview={overview} />
-              <InstagramAnalyticsSection instagram={instagram} />
-              <WebsiteAnalyticsSection website={website} />
+              <ReleasesSection overview={overview} />
               <InsightsSection />
             </div>
           )}

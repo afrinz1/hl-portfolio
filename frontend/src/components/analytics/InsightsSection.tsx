@@ -69,7 +69,7 @@ export function InsightsSection() {
   return (
     <section id="insights" className="scroll-mt-28" aria-label="Studio insights">
       <SectionHeading
-        index="05"
+        index="04"
         title="Insights"
         caption="A plain-language read of the numbers on this page."
         source={source}

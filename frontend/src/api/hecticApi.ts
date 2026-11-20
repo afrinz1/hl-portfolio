@@ -123,8 +123,7 @@ export const hecticApi = {
    *
    * Deliberately has no demo fallback: these figures must reflect the real
    * portfolio, so a failure surfaces as an error state rather than silently
-   * showing invented numbers. Website and Instagram metrics are demo data and
-   * live in `demoAnalytics.ts`.
+   * showing invented numbers.
    */
   async getAnalyticsOverview(): Promise<PortfolioOverview> {
     const url = buildApiUrl('/analytics/overview/');

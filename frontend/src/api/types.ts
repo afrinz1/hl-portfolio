@@ -237,6 +237,12 @@ export interface ProjectsByMonthPoint {
   projects: number;
 }
 
+export interface ProjectsByYearPoint {
+  year: number;
+  label: string;
+  projects: number;
+}
+
 export interface MediaBreakdownPoint {
   type: 'image' | 'video' | string;
   label: string;
@@ -259,6 +265,7 @@ export interface PortfolioOverview {
   source: 'database' | string;
   totals: AnalyticsTotals;
   category_distribution: CategoryDistributionPoint[];
+  projects_by_year: ProjectsByYearPoint[];
   projects_by_month: ProjectsByMonthPoint[];
   media_breakdown: MediaBreakdownPoint[];
   selected_work: SelectedWorkItem[];
