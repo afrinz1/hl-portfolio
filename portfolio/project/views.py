@@ -15,18 +15,31 @@ class CategoryListView(generics.ListAPIView):
 
 # List all published and active projects
 class ProjectListView(generics.ListAPIView):
-    queryset = (
-        Project.objects
-        .filter(
-            status=True,
-            active_status=True,
-            category__is_active=True
-        )
-        .select_related("category")
-        .prefetch_related("media")
-    )
-
     serializer_class = ProjectSerializer
+
+    def get_queryset(self):
+        queryset = (
+            Project.objects
+            .filter(
+                status=True,
+                active_status=True,
+                category__is_active=True
+            )
+            .select_related("category")
+            .prefetch_related("media")
+        )
+
+        # Optional ?category=<slug|id> filter used by the work and category
+        # pages. Without this the same full project list is returned for every
+        # category.
+        category = self.request.query_params.get("category")
+        if category:
+            if str(category).isdigit():
+                queryset = queryset.filter(category_id=category)
+            else:
+                queryset = queryset.filter(category__slug=category)
+
+        return queryset
 
 
 # Retrieve a single project using its slug
