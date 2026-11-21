@@ -2,6 +2,7 @@
 # as possible without breaking existing behaviour or introducing another vector DB.
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any, Dict, List
@@ -13,6 +14,8 @@ except ImportError:
         pass
 
     genai_errors = type("genai_errors", (), {"APIError": _MockAPIError})
+
+from django.http import StreamingHttpResponse
 
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -26,6 +29,7 @@ from .utils import (
     build_gemini_context,
     generate_chat_response,
     get_public_projects,
+    iter_chat_response,
     search_public_projects,
 )
 
@@ -34,28 +38,66 @@ logger = logging.getLogger(__name__)
 _RETRYABLE_PROVIDER_CODES = {429, 500, 502, 503, 504}
 
 
-def _provider_error_response(exc: genai_errors.APIError) -> Response:
+def _provider_error_payload(exc: genai_errors.APIError) -> Dict[str, Any]:
+    """The JSON body shared by the buffered and streamed error responses."""
     if exc.code in _RETRYABLE_PROVIDER_CODES:
+        return {
+            "error": (
+                "Our AI assistant is temporarily experiencing "
+                "high demand. Please try again shortly."
+            ),
+            "code": "AI_PROVIDER_UNAVAILABLE",
+            "retryable": True,
+        }
+    return {
+        "error": "The AI service could not process your request.",
+        "code": "AI_PROVIDER_ERROR",
+        "retryable": False,
+    }
+
+
+def _provider_error_response(exc: genai_errors.APIError) -> Response:
+    payload = _provider_error_payload(exc)
+    if payload["retryable"]:
         return Response(
-            {
-                "error": (
-                    "Our AI assistant is temporarily experiencing "
-                    "high demand. Please try again shortly."
-                ),
-                "code": "AI_PROVIDER_UNAVAILABLE",
-                "retryable": True,
-            },
+            payload,
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
             headers={"Retry-After": "5"},
         )
-    return Response(
-        {
-            "error": "The AI service could not process your request.",
-            "code": "AI_PROVIDER_ERROR",
-            "retryable": False,
-        },
-        status=status.HTTP_502_BAD_GATEWAY,
-    )
+    return Response(payload, status=status.HTTP_502_BAD_GATEWAY)
+
+
+def _sse(payload: Dict[str, Any]) -> str:
+    """Serialize a single Server-Sent Event frame."""
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def build_project_sources(prompt: str) -> List[Dict[str, Any]]:
+    """
+    Build the project source cards returned alongside an answer.
+
+    The plain-text context from build_gemini_context is not a database, so the
+    same efficient query is re-run to reconstruct the exact project list it was
+    built from. This is shared by the buffered and streamed chat responses.
+    """
+    projects = get_public_projects()
+
+    results = []
+    for project in projects:
+        category = (
+            project.category.name if project.category else "—"
+        )
+        results.append(
+            {
+                "slug": project.slug,
+                "title": project.title,
+                "category": category,
+                "client": project.client,
+                "year": project.year,
+                "description": project.description,
+            }
+        )
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +175,7 @@ class PortfolioChatView(APIView):
             gen_time = time.perf_counter() - stage_start
 
             # Sources are the project cards for the retrieved context.
-            sources = self._build_project_sources(prompt)
+            sources = build_project_sources(prompt)
 
             total_time = time.perf_counter() - request_start
 
@@ -180,40 +222,145 @@ class PortfolioChatView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # ---------------------------------------------------------------------------
-    # Source cards: the same project-set used by the previous version.
-    # ---------------------------------------------------------------------------
 
-    @staticmethod
-    def _build_project_sources(prompt: str) -> List[Dict[str, Any]]:
-        """
-        Extract project source cards from the generated context.
+# ---------------------------------------------------------------------------
+# Streaming chat (Server-Sent Events).
+#
+# Identical session handling, context building, source cards and error contract
+# to ``PortfolioChatView``; only the response transport differs. The reply is
+# emitted token-by-token so the widget can render it as it is generated instead
+# of waiting for the complete answer.
+# ---------------------------------------------------------------------------
 
-        The plain-text context from build_gemini_context is not a database,
-        so we reconstruct the exact project source list it was built from.
-        This keeps the frontend contract stable while the squad is free
-        to change the internal representation of the prompt.
-        """
-        # Re-run the same efficient queries used to build the context, so the
-        # source cards always match the current data.
-        projects = get_public_projects()
 
-        results = []
-        for project in projects:
-            category = (
-                project.category.name if project.category else "—"
-            )
-            results.append(
+class PortfolioChatStreamView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "portfolio_chat"
+
+    def post(self, request):
+        serializer = ChatRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        message = serializer.validated_data["message"]
+        session_id = serializer.validated_data.get("session_id")
+        visitor_token = serializer.validated_data.get("visitor_token")
+
+        # Resolve the session before streaming so an invalid session is still a
+        # normal JSON 404 rather than a broken event stream.
+        if session_id and visitor_token:
+            session = ChatSession.objects.filter(
+                id=session_id,
+                visitor_token=visitor_token,
+                is_active=True,
+            ).first()
+            if not session:
+                return Response(
+                    {"error": "Invalid or expired chat session."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        else:
+            session = ChatSession.objects.create()
+
+        history_messages = list(session.messages.order_by("-created_at")[:10])
+        history_messages.reverse()
+        history = [
+            {"role": item.role, "content": item.content}
+            for item in history_messages
+        ]
+
+        ChatMessage.objects.create(
+            session=session,
+            role="user",
+            content=message,
+        )
+
+        prompt = build_gemini_context(
+            question=message,
+            history=history,
+            max_history_turns=10,
+        )
+        sources = build_project_sources(prompt)
+
+        def event_stream():
+            # The meta frame carries the session identifiers (so the client can
+            # continue the conversation) and the project source cards.
+            yield _sse(
                 {
-                    "slug": project.slug,
-                    "title": project.title,
-                    "category": category,
-                    "client": project.client,
-                    "year": project.year,
-                    "description": project.description,
+                    "type": "meta",
+                    "session_id": str(session.id),
+                    "visitor_token": str(session.visitor_token),
+                    "sources": sources,
                 }
             )
-        return results
+
+            request_start = time.perf_counter()
+            parts: List[str] = []
+
+            try:
+                stage_start = time.perf_counter()
+                for piece in iter_chat_response(
+                    question=message,
+                    history=history,
+                    max_history_turns=10,
+                    context_prompt=prompt,
+                ):
+                    parts.append(piece)
+                    yield _sse({"type": "delta", "text": piece})
+                gen_time = time.perf_counter() - stage_start
+
+                answer = "".join(parts).strip()
+                if not answer:
+                    raise RuntimeError("Gemini returned an empty response.")
+
+                ChatMessage.objects.create(
+                    session=session,
+                    role="assistant",
+                    content=answer,
+                    sources=sources,
+                )
+
+                logger.info(
+                    "Portfolio chat stream: gen=%.2fs total=%.2fs",
+                    gen_time,
+                    time.perf_counter() - request_start,
+                )
+
+                yield _sse(
+                    {
+                        "type": "done",
+                        "timing": {
+                            "gemini_ms": round(gen_time * 1000, 2),
+                            "total_ms": round(
+                                (time.perf_counter() - request_start) * 1000, 2
+                            ),
+                        },
+                    }
+                )
+            except genai_errors.APIError as exc:
+                logger.exception("Gemini API error (stream): %s", exc)
+                yield _sse({"type": "error", **_provider_error_payload(exc)})
+            except Exception as exc:
+                logger.exception("Portfolio assistant stream failed: %s", exc)
+                yield _sse(
+                    {
+                        "type": "error",
+                        "error": (
+                            "Something went wrong while generating your response."
+                        ),
+                        "code": "INTERNAL_ASSISTANT_ERROR",
+                        "retryable": False,
+                    }
+                )
+
+        response = StreamingHttpResponse(
+            event_stream(),
+            content_type="text/event-stream",
+        )
+        # Keep proxies (and the browser) from buffering the stream.
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
 
 
 # ---------------------------------------------------------------------------

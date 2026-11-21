@@ -2,11 +2,8 @@
 
 Every figure served by this module is aggregated from the live database
 (``project`` and ``studio`` tables). Website traffic and Instagram Insights are
-deliberately NOT served here: those have no collection source yet, so they live
-as clearly labelled demo data in the frontend (``src/api/demoAnalytics.ts``).
-
-The two sources stay separate so real Instagram Insights can replace the demo
-values later without changing this contract.
+deliberately NOT served here: neither has a collection source yet, so neither is
+shown on the dashboard.
 """
 
 from datetime import date
@@ -104,6 +101,12 @@ def build_overview() -> dict:
     )
     years = [row["year"] for row in year_rows if row["year"]]
 
+    projects_by_year = [
+        {"year": row["year"], "label": str(row["year"]), "projects": row["count"]}
+        for row in year_rows
+        if row["year"]
+    ]
+
     # Projects have no release month, so the monthly view counts when each
     # project entered the archive (``created_at``), bucketed by month.
     month_counts = {
@@ -165,6 +168,7 @@ def build_overview() -> dict:
             ),
         },
         "category_distribution": category_distribution,
+        "projects_by_year": projects_by_year,
         "projects_by_month": projects_by_month,
         "media_breakdown": [
             {

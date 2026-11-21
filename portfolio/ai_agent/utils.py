@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from django.conf import settings
 from django.core.cache import cache as django_cache
@@ -413,6 +413,100 @@ def generate_chat_response(
         )
 
     return answer
+
+
+# ---------------------------------------------------------------------------
+# Gemini chat generation (streamed).
+# ---------------------------------------------------------------------------
+
+
+def iter_chat_response(
+    *,
+    question: str,
+    history: Optional[List[Dict[str, str]]] = None,
+    max_history_turns: int = 10,
+    context_prompt: Optional[str] = None,
+) -> Iterator[str]:
+    """
+    Yield an assistant response token-by-token.
+
+    Same cache, model ladder and retryable-code fallback as
+    :func:`generate_chat_response`; only the transport differs. A cached
+    answer is yielded whole (it is already instant), otherwise the chunks come
+    straight from ``generate_content_stream`` so the visitor reads the reply
+    while it is still being written.
+    """
+    cache_key = None
+    if settings.AI_CHAT_CACHE_ENABLED:
+        cache_key = _make_cache_key(
+            policy="hectic_lab_assistant",
+            question=question,
+            ttl=settings.AI_CHAT_CACHE_TTL_SECONDS,
+        )
+        cached = django_cache.get(cache_key)
+
+        if cached is not None:
+            answer = cached.get("answer", "").strip()
+            if answer:
+                yield answer
+                return
+
+    prompt = context_prompt or build_gemini_context(
+        question=question,
+        history=history,
+        max_history_turns=max_history_turns,
+    )
+
+    client = get_gemini_client()
+    model = _select_gemini_chat_model()
+    fallback_model = getattr(settings, "GEMINI_CHAT_FALLBACK_MODEL", "").strip()
+    retryable_codes = {429, 500, 502, 503, 504}
+
+    def stream(model_name: str):
+        return client.models.generate_content_stream(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_level="low"),
+                max_output_tokens=700,
+            ),
+        )
+
+    parts: List[str] = []
+    try:
+        for chunk in stream(model):
+            piece = getattr(chunk, "text", None)
+            if not piece:
+                continue
+            parts.append(piece)
+            yield piece
+    except genai_errors.APIError as exc:
+        # Only fall back when nothing has been sent yet: once tokens are on the
+        # wire a retry would repeat the partial answer.
+        if (
+            parts
+            or exc.code not in retryable_codes
+            or not fallback_model
+            or fallback_model == model
+        ):
+            raise
+        for chunk in stream(fallback_model):
+            piece = getattr(chunk, "text", None)
+            if not piece:
+                continue
+            parts.append(piece)
+            yield piece
+
+    answer = "".join(parts).strip()
+    if not answer:
+        raise RuntimeError("Gemini returned an empty response.")
+
+    if cache_key is not None:
+        django_cache.set(
+            cache_key,
+            {"answer": answer, "created_at": timezone.now().isoformat()},
+            timeout=settings.AI_CHAT_CACHE_TTL_SECONDS,
+        )
 
 
 # ---------------------------------------------------------------------------

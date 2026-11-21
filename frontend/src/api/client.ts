@@ -341,3 +341,91 @@ export async function apiRequest<T>(
 
   return (await response.json()) as T;
 }
+
+/**
+ * Consumes a Server-Sent Events (``text/event-stream``) response, invoking
+ * ``onEvent`` for each ``data:`` payload. Mirrors ``apiRequest``'s bearer and
+ * CSRF header handling so streaming endpoints are authenticated the same way
+ * as the rest of the API.
+ */
+export async function streamSse<T = unknown>(
+  url: string,
+  body: unknown,
+  onEvent: (event: T) => void
+): Promise<void> {
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+  };
+
+  if (_accessToken) {
+    headers['Authorization'] = `Bearer ${_accessToken}`;
+  }
+  const csrf = getCsrfToken();
+  if (csrf) {
+    headers[CSRF_HEADER_NAME] = csrf;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      // Send cookies so the CSRF cookie (and the HttpOnly refresh cookie when
+      // the editor is logged in) travel with the request.
+      credentials: 'include',
+      headers,
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(
+      'Unable to reach the Hectic Lab API. Verify VITE_API_BASE_URL and server connectivity.',
+      0
+    );
+  }
+
+  if (!response.ok) {
+    if (response.status === 502 || response.status === 503) {
+      throw new ApiError(
+        'Backend server unavailable (HTTP 502/503). The API is unreachable or starting up — check that the Django backend is running and reachable at VITE_API_BASE_URL, then try again.',
+        response.status
+      );
+    }
+    const errData = await response.json().catch(() => null);
+    throw parseDrfErrors(errData, response.status);
+  }
+
+  if (!response.body) {
+    throw new ApiError('Streaming is not supported in this browser.', 0);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE frames are separated by a blank line; keep the trailing partial
+    // frame in the buffer until the next chunk completes it.
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+
+    for (const frame of frames) {
+      const payload = frame
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n');
+      if (!payload) continue;
+
+      try {
+        onEvent(JSON.parse(payload) as T);
+      } catch {
+        // Ignore malformed frames rather than aborting the whole stream.
+      }
+    }
+  }
+}

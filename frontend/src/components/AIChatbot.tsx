@@ -6,7 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { ArrowUp, MessageCircle, RotateCcw, X } from 'lucide-react';
-import { ApiError, apiRequest, buildApiUrl } from '../api/client';
+import { ApiError, buildApiUrl, streamSse } from '../api/client';
 import { HecticLogoMark } from './Navbar';
 
 interface ChatMessage {
@@ -20,12 +20,17 @@ interface ChatSession {
   visitor_token: string;
 }
 
-/** The reply contract of POST /api/v1/assistant/chat/. */
-interface ChatResponse {
-  session_id: string;
-  visitor_token: string;
-  answer: string;
-}
+/** Frames emitted by the streaming assistant endpoint (SSE). */
+type ChatStreamEvent =
+  | {
+      type: 'meta';
+      session_id: string;
+      visitor_token: string;
+      sources?: unknown[];
+    }
+  | { type: 'delta'; text: string }
+  | { type: 'done'; timing?: Record<string, number> }
+  | { type: 'error'; error: string; code?: string; retryable?: boolean };
 
 interface LauncherDrag {
   startX: number;
@@ -187,38 +192,59 @@ export function AIChatbot() {
     setError(null);
     setIsSending(true);
 
-    const replaceAssistant = (content: string) => {
+    // The reply arrives token-by-token, so the assistant bubble is filled as
+    // each delta is streamed instead of being replaced once at the end.
+    let answer = '';
+    let failed = false;
+
+    const appendAssistant = (chunk: string) => {
+      answer += chunk;
       setMessages((current) =>
         current.map((message) =>
-          message.id === assistantId ? { ...message, content } : message
+          message.id === assistantId ? { ...message, content: answer } : message
         )
       );
     };
 
+    const failAssistant = (message: string) => {
+      failed = true;
+      setError(message);
+      // Keep any text already streamed; only fall back to the error message
+      // when nothing arrived.
+      if (!answer.trim()) {
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === assistantId ? { ...item, content: message } : item
+          )
+        );
+      }
+    };
+
     try {
-      const response = await apiRequest<ChatResponse>(
-        buildApiUrl('/assistant/chat/'),
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            message: text,
-            ...(session ?? {}),
-          }),
+      await streamSse<ChatStreamEvent>(
+        buildApiUrl('/assistant/chat/stream/'),
+        { message: text, ...(session ?? {}) },
+        (event) => {
+          if (event.type === 'meta') {
+            if (event.session_id && event.visitor_token) {
+              setSession({
+                session_id: event.session_id,
+                visitor_token: event.visitor_token,
+              });
+            }
+          } else if (event.type === 'delta') {
+            appendAssistant(event.text);
+          } else if (event.type === 'error') {
+            failAssistant(
+              event.error || 'The assistant couldn’t reply just now. Please try again.'
+            );
+          }
         }
       );
 
-      if (response.session_id && response.visitor_token) {
-        setSession({
-          session_id: response.session_id,
-          visitor_token: response.visitor_token,
-        });
+      if (!failed && !answer.trim()) {
+        failAssistant('The assistant returned an empty response. Please try again.');
       }
-
-      const answer = response.answer ?? '';
-      if (!answer.trim()) {
-        throw new Error('The assistant returned an empty response. Please try again.');
-      }
-      replaceAssistant(answer);
     } catch (requestError) {
       const message =
         requestError instanceof ApiError && requestError.status === 429
@@ -226,8 +252,7 @@ export function AIChatbot() {
           : requestError instanceof Error
             ? requestError.message
             : 'The assistant couldn’t reply just now. Please try again.';
-      setError(message);
-      replaceAssistant(message);
+      failAssistant(message);
     } finally {
       setIsSending(false);
       inputRef.current?.focus();
