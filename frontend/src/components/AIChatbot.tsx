@@ -1,9 +1,11 @@
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 import { ArrowUp, MessageCircle, RotateCcw, X } from 'lucide-react';
 import { ApiError, apiRequest, buildApiUrl } from '../api/client';
@@ -42,6 +44,138 @@ const SUGGESTIONS = [
   'What services do you offer?',
   'Show me some projects',
 ];
+
+/**
+ * Inline markup the assistant is known to emit: ``**bold**``, ``*italic*`` and
+ * ``\`code\```. Anything unmatched is rendered verbatim, so no HTML from the
+ * model is ever interpreted.
+ */
+const INLINE_MARKUP = /(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`\n]+`)/g;
+
+function renderInline(text: string, keyPrefix: string): ReactNode[] {
+  return text
+    .split(INLINE_MARKUP)
+    .filter((token) => token !== '')
+    .map((token, index) => {
+      const key = `${keyPrefix}-${index}`;
+
+      if (token.startsWith('**') && token.endsWith('**')) {
+        return (
+          <strong key={key} className="font-semibold">
+            {token.slice(2, -2)}
+          </strong>
+        );
+      }
+
+      if (token.startsWith('`') && token.endsWith('`')) {
+        return (
+          <code
+            key={key}
+            className="font-mono-hl rounded bg-[#111110]/[0.06] px-1 py-0.5 text-[12px]"
+          >
+            {token.slice(1, -1)}
+          </code>
+        );
+      }
+
+      if (token.startsWith('*') && token.endsWith('*')) {
+        return (
+          <em key={key} className="italic">
+            {token.slice(1, -1)}
+          </em>
+        );
+      }
+
+      return <Fragment key={key}>{token}</Fragment>;
+    });
+}
+
+/**
+ * Renders an assistant reply as light markdown instead of raw text: paragraphs,
+ * ``*``/``-`` bullet lists, numbered lists and inline emphasis.
+ */
+function AssistantReply({ content }: { content: string }) {
+  const blocks: ReactNode[] = [];
+  let paragraph: string[] = [];
+  let list: { ordered: boolean; items: string[] } | null = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    const key = `p-${blocks.length}`;
+    blocks.push(<p key={key}>{renderInline(paragraph.join(' '), key)}</p>);
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (!list) return;
+    const current = list;
+    const key = `list-${blocks.length}`;
+    const items = current.items.map((item, index) => (
+      <li key={index} className="flex gap-2.5">
+        {current.ordered ? (
+          <span className="font-mono-hl w-3.5 shrink-0 text-[11px] tabular-nums text-[#73726d]">
+            {index + 1}.
+          </span>
+        ) : (
+          <span
+            aria-hidden="true"
+            className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[#14bfb9]"
+          />
+        )}
+        <span className="min-w-0 flex-1">
+          {renderInline(item, `${key}-${index}`)}
+        </span>
+      </li>
+    ));
+    blocks.push(
+      current.ordered ? (
+        <ol key={key} className="space-y-2">
+          {items}
+        </ol>
+      ) : (
+        <ul key={key} className="space-y-2">
+          {items}
+        </ul>
+      )
+    );
+    list = null;
+  };
+
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+    const bullet = line.match(/^[*-•]\s+(.*)$/);
+    const numbered = line.match(/^\d+[.)]\s+(.*)$/);
+
+    if (bullet) {
+      flushParagraph();
+      if (!list || list.ordered) {
+        flushList();
+        list = { ordered: false, items: [] };
+      }
+      list.items.push(bullet[1]);
+      continue;
+    }
+
+    if (numbered) {
+      flushParagraph();
+      if (!list || !list.ordered) {
+        flushList();
+        list = { ordered: true, items: [] };
+      }
+      list.items.push(numbered[1]);
+      continue;
+    }
+
+    flushList();
+    if (line) paragraph.push(line);
+    else flushParagraph();
+  }
+
+  flushList();
+  flushParagraph();
+
+  return <div className="space-y-3">{blocks}</div>;
+}
 
 export function AIChatbot() {
   const [isOpen, setIsOpen] = useState(false);
@@ -348,27 +482,31 @@ export function AIChatbot() {
                 if (message.role === 'assistant' && !message.content) {
                   return null;
                 }
+                const isUser = message.role === 'user';
+                const bubble = `max-w-[86%] rounded-2xl px-4 py-3 text-sm leading-6 ${
+                  isUser
+                    ? 'whitespace-pre-wrap rounded-br-md bg-[#111110] text-[#F3F0E9] shadow-[0_8px_20px_rgba(17,17,16,0.16)]'
+                    : `rounded-bl-md border bg-white text-[#111110] shadow-[0_2px_10px_rgba(17,17,16,0.05)] ${
+                        error && message === messages[messages.length - 1]
+                          ? 'border-amber-700/25'
+                          : 'border-[#111110]/[0.06]'
+                      }`
+                }`;
                 return (
-                <div
-                  key={message.id}
-                  className={`chat-pop-in flex ${
-                    message.role === 'user' ? 'justify-end' : 'justify-start'
-                  }`}
-                >
-                  <p
-                    className={`max-w-[86%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${
-                      message.role === 'user'
-                        ? 'rounded-br-md bg-[#111110] text-[#F3F0E9] shadow-[0_8px_20px_rgba(17,17,16,0.16)]'
-                        : `rounded-bl-md border bg-white text-[#111110] shadow-[0_2px_10px_rgba(17,17,16,0.05)] ${
-                            error && message === messages[messages.length - 1]
-                              ? 'border-amber-700/25'
-                              : 'border-[#111110]/[0.06]'
-                          }`
+                  <div
+                    key={message.id}
+                    className={`chat-pop-in flex ${
+                      isUser ? 'justify-end' : 'justify-start'
                     }`}
                   >
-                    {message.content}
-                  </p>
-                </div>
+                    {isUser ? (
+                      <p className={bubble}>{message.content}</p>
+                    ) : (
+                      <div className={bubble}>
+                        <AssistantReply content={message.content} />
+                      </div>
+                    )}
+                  </div>
                 );
               })
             )}
@@ -399,7 +537,7 @@ export function AIChatbot() {
           <div className="border-t border-[#111110]/10 bg-white/40 px-4 pb-4 pt-3 sm:px-5">
             <form
               onSubmit={handleSubmit}
-              className="flex items-center gap-2 rounded-full border border-[#111110]/10 bg-white p-1.5 pl-4 shadow-[0_2px_10px_rgba(17,17,16,0.04)] transition focus-within:border-[#14bfb9] focus-within:ring-2 focus-within:ring-[#14bfb9]/15"
+              className="chat-composer flex items-center gap-2 rounded-full border border-[#111110]/10 bg-white p-1.5 pl-4 shadow-[0_2px_10px_rgba(17,17,16,0.04)] transition focus-within:border-[#111110]/25"
             >
               <input
                 ref={inputRef}

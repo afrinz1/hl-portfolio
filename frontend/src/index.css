@@ -76,6 +76,15 @@ select {
   outline-offset: 3px;
 }
 
+/*
+ * The AI chat composer is a pill, so the global outline would draw a box
+ * around the inner text field while typing. That composer opts out and shows
+ * focus through its own border instead.
+ */
+.chat-composer input:focus-visible {
+  outline: none;
+}
+
 .font-display {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   letter-spacing: -0.055em;
